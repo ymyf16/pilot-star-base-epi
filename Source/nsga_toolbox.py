@@ -32,7 +32,7 @@ def NonDominatedSorting(obj_scores: npt.NDArray[np.float32]) -> Tuple[List[npt.N
     pop_size = obj_scores.shape[0]
     # final fronts returned
     fronts = [[]]
-    # what front is solution 'p' in
+    # what front is solutions 'p' in
     rank = np.zeros(pop_size, dtype=np.uint16)
     # how many 'q' solutions dominate 'p' solution
     domination_count = np.zeros(pop_size, dtype=np.uint16)
@@ -50,18 +50,6 @@ def NonDominatedSorting(obj_scores: npt.NDArray[np.float32]) -> Tuple[List[npt.N
             rank[p] = 0
             fronts[0].append(p)
 
-    # print("how many 'q' solutions dominate 'p' solution")
-    # print('domination_count:', domination_count)
-    # print("\nwhat 'q' solutions are dominated by 'p' solution")
-    # print('dominated_solutions:')
-    # for i,ds in enumerate(dominated_solutions):
-    #     print('solution ' + str(i) + ':', ds)
-    # print()
-    # print('initial fronts:')
-    # for i,f in enumerate(fronts):
-    #     print('front ' + str(i)+':',f)
-    # print()
-
     i = 0
     while len(fronts[i]) > 0:
         next_front = []
@@ -72,20 +60,12 @@ def NonDominatedSorting(obj_scores: npt.NDArray[np.float32]) -> Tuple[List[npt.N
                 if domination_count[q] == 0:
                     rank[q] = i + 1
                     next_front.append(q)
-
-        # print('UPDATE domination_count:', domination_count)
         i += 1
         fronts.append(next_front)
 
-    # print()
     fronts.pop()
-    # print('final fronts:')
-    # for i,f in enumerate(fronts):
-        # print('front ' + str(i)+':',f)
-
     fronts = [np.array(front, dtype=np.uint16) for front in fronts]
-    # print(fronts)
-    # print('internal rank:', rank)
+    
     return fronts, rank
 
 @typechecked
@@ -135,8 +115,8 @@ def CrowdingDistance(obj_scores: npt.NDArray[np.float32], count: np.int32) -> np
 
     return crowding_distances
 
-@typechecked # for debugging purposes
-def Dominates(solution1: npt.NDArray[np.float32], solution2: npt.NDArray[np.float32]) -> np.bool:
+@typechecked
+def Dominates(solution1: npt.NDArray[np.float32], solution2: npt.NDArray[np.float32]) -> bool:
     """
     Check if solution1 dominates solution2.
 
@@ -153,9 +133,9 @@ def Dominates(solution1: npt.NDArray[np.float32], solution2: npt.NDArray[np.floa
     better_in_all = np.all(solution1 >= solution2)
     better_in_at_least_one = np.any(solution1 > solution2)
 
-    return np.bool(better_in_all and better_in_at_least_one)
+    return bool(better_in_all and better_in_at_least_one)
 
-@typechecked # for debugging purposes
+@typechecked
 def NonDominatedBinaryTournament(ranks: npt.NDArray[np.uint16], distances: npt.NDArray[np.float32], rng: np.random.Generator) -> np.uint16:
 
     # make srue that ranks and distances are the same size
@@ -179,7 +159,7 @@ def NonDominatedBinaryTournament(ranks: npt.NDArray[np.uint16], distances: npt.N
     else:
         return t1 if ranks[t1] < ranks[t2] else t2
 
-@typechecked # for debugging purposes
+@typechecked
 def NonDominatedTruncate(fronts: List[npt.NDArray[np.uint16]], distances: npt.NDArray[np.float32], N: np.uint16) -> npt.NDArray[np.uint16]:
     # make sure that fronts and distances are the nonempty
     assert sum([len(x) for x in fronts]) > 0 and len(distances) > 0
