@@ -15,16 +15,25 @@ import copy as cp
 import pandas as pd
 import sys, os
 import ray
-# from pipeline import Pipeline
+from pipeline import Pipeline
 import nsga_toolbox as nsga
 from sklearn.utils import check_X_y, check_array, check_consistent_length
 from sklearn.model_selection import train_test_split
 import time
 from geno_hub import GenoHub
 
-class Pipeline:
-    def __init__(self) -> None:
-        pass
+# def ray_eval(x_train, y_train, x_val, y_val, sklearn_pipeline):
+#     # fit the pipeline
+#     sklearn_pipeline.fit(x_train)
+
+#     # evaluate the pipeline
+#     predictions = sklearn_pipeline.predict(x_val)
+
+
+#     r^2 = sklearn.r2(predictions)
+
+#     # return the pipeline
+#     return r2, complexity
 
 @typechecked # for debugging purposes
 class EA:
@@ -72,7 +81,7 @@ class EA:
         print('dashboard:', context.dashboard_url)
 
     # data loader
-    def DataLoader(self, path: str, target_label: str = "y", split: float = 0.50) -> None:
+    def data_loader(self, path: str, target_label: str = "y", split: float = 0.50) -> None:
         """
         Function to load data from a csv file into a pandas dataframe.
         We assume that the target label is 'y', unless otherwise specified.
@@ -111,7 +120,7 @@ class EA:
         all_y = pd.read_csv(filepath_or_buffer=path, usecols=[self.target_label]).values.ravel()
 
         # check if the data was loaded correctly
-        all_x, all_y = self.CheckDataset(all_x, all_y)
+        all_x, all_y = self.check_dataset(all_x, all_y)
         print('X_data.shape:', all_x.shape)
         print('y_data.shape:', all_y.shape)
         print()
@@ -138,7 +147,7 @@ class EA:
         print('Data loaded successfully.')
 
     # data checker to check for validity of dataset
-    def CheckDataset(self, features, target):
+    def check_dataset(self, features, target):
         """
         Check if a dataset has a valid feature set and labels.
 
@@ -178,7 +187,7 @@ class EA:
                 "1-D array."
             )
 
-    def IntializeHubs(self, bin_size:int) -> None:
+    def initialize_hubs(self, bin_size:int) -> None:
         """
         Function to initialize the hubs for the evolutionary algorithm.
         This function must be called after the data has been loaded.
@@ -192,11 +201,10 @@ class EA:
         self.hubs = GenoHub(snps=self.snp_labels, bin_size=np.uint16(bin_size))
 
 
-
     # Run NSGA-II for a specified number of generations
     # All functions below are EA specific
 
-    def Evolve(self, gens: np.uint16) -> None:
+    def evolve(self, gens: np.uint16) -> None:
         """
         Function to evovle pipelines using the NSGA-II algorithm for a user specified number of generations.
         We also take in the training and validation data to evaluate the pipelines.
@@ -208,42 +216,46 @@ class EA:
         """
 
         # create the initial population
-        self.InitializePopulation()
+        self.initialize_population()
 
         # for each generation
         for gen in range(gens):
 
             # evaluate the initial population
             # transform pipeline into scikit learn pipeline
-            pop_obj_scores = self.Evaluation(self.population)
+            pop_obj_scores = self.evaluation(self.population)
 
 
             # select parent pipelines
-            parents = self.ParentSelection(pop_obj_scores)
+            # parents = self.parent_selection(pop_obj_scores)
 
             # create offspring pipelines
-            offspring = self.Reproduction(parents)
+            # offspring = self.reproduction(parents)
 
             # evaluate the offspring
-            off_obj_scores = self.Evaluation(offspring)
+            # off_obj_scores = self.evaluation(offspring)
 
             # select surviving pipelines
             # TODO: make sure that the np,concatenate is correctly stacking the scores
-            self.SurvivialSelection(np.concatenate((pop_obj_scores, off_obj_scores), axis=None))
+            # self.survivial_selection(np.concatenate((pop_obj_scores, off_obj_scores), axis=None))
 
-    def InitializePopulation(self):
+    def initialize_population(self):
         pass
 
-    def Evaluation(self, pop: List[Pipeline]) -> npt.NDArray[np.float32]:
+    def evaluation(self, pop: List[Pipeline]) -> npt.NDArray[np.float32]:
+        # convert to sklearn pipeline
+        # send to ray for eval
+        # get back scores and set them in pipeline (traits)
+        # return scores [(r2, complexity),....]
         pass
 
-    def ParentSelection(self, pop_scores: npt.NDArray[np.float32]) -> List[Pipeline]:
+    def parent_selection(self, pop_scores: npt.NDArray[np.float32]) -> List[Pipeline]:
         pass
 
-    def Reproduction(self, parents: List[Pipeline]) -> List[Pipeline]:
+    def reproduction(self, parents: List[Pipeline]) -> List[Pipeline]:
         pass
 
-    def SurvivialSelection(self, scores: npt.NDArray[np.float32]) -> None:
+    def survivial_selection(self, scores: npt.NDArray[np.float32]) -> None:
         pass
 
 
@@ -261,8 +273,8 @@ def main():
                  'smt_out_out_p': np.float32(.45)}
 
     ea = EA(**ea_config)
-    ea.DataLoader('/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/pruned_ratdata_bmitail_onSNPnum.csv')
-    ea.IntializeHubs(10)
+    ea.data_loader('/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/pruned_ratdata_bmitail_onSNPnum.csv')
+    ea.initialize_hubs(10)
     # time.sleep(20)
 
     ray.shutdown()
