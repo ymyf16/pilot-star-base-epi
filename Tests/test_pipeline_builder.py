@@ -26,7 +26,7 @@ pipeline_builder = Pipeline_Builder(pipeline)
 sklearn_pipeline = pipeline_builder.build_sklearn_pipeline()
 
 # Evaluate the pipeline
-skl_pipeline_fitted = pipeline_builder.evaluate_pipeline(X, y)
+skl_pipeline_fitted = pipeline_builder.evaluate_pipeline(X, y) # fit the pipeline
 
 print("Pipeline built successfully!")
 print(pipeline)

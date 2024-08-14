@@ -7,9 +7,10 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from typing import List, Dict
 import numpy as np
 
-class Pipeline_Builder:
+class PipelineBuilder:
     def __init__(self, pipeline: Pipeline):
         self.pipeline = pipeline
+        self.fitted_pipeline = None
 
     def build_sklearn_pipeline(self) -> SklearnPipeline:
         # Create a dictionary to hold the steps for the scikit-learn pipeline
@@ -47,3 +48,20 @@ class Pipeline_Builder:
         # predictions = skl_pipeline.predict(X)
         
         return skl_pipeline_fitted
+    
+    def fit(self, X, y):
+        # assume that the sklearn pipeline is already built
+        # Fit the pipeline
+        skl_pipeline_fitted = self.fit(X, y)
+        
+        return skl_pipeline_fitted
+    
+    def predict(self, X):
+        # assume that the sklearn pipeline is already built and fitted
+        if self.skl_pipeline_fitted is None:
+            raise ValueError("Pipeline is not fitted yet.")
+
+        # Make predictions
+        predictions = self.predict(X)
+        
+        return predictions
