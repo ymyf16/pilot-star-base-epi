@@ -2,7 +2,6 @@
 #
 # NSGA-II tool box for the selection and evolutionary process.
 #
-# Python 3.12.4: conda activate star-epi-pre
 #####################################################################################################
 
 import numpy as np
@@ -65,7 +64,7 @@ def NonDominatedSorting(obj_scores: npt.NDArray[np.float32]) -> Tuple[List[npt.N
 
     fronts.pop()
     fronts = [np.array(front, dtype=np.uint16) for front in fronts]
-    
+
     return fronts, rank
 
 @typechecked

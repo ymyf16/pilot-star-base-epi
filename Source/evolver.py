@@ -13,18 +13,24 @@ from typing import List
 import numpy.typing as npt
 import copy as cp
 import pandas as pd
-import sys
+import sys, os
 import ray
-from pipeline import Pipeline
+# from pipeline import Pipeline
 import nsga_toolbox as nsga
 from sklearn.utils import check_X_y, check_array, check_consistent_length
+from sklearn.model_selection import train_test_split
+import time
+from geno_hub import GenoHub
 
+class Pipeline:
+    def __init__(self) -> None:
+        pass
 
 @typechecked # for debugging purposes
 class EA:
-    def __init__(self, seed: np.uint16, pop_size: np.uint16, epi_cnt_max: np.uint16, cores: np.uint8,
-                 mut_ran_p: np.float32, mut_smt_p: np.float32, mut_non_p: np.float32,
-                 smt_in_in_p: np.float32, smt_in_out_p: np.float32, smt_out_out_p: np.float32) -> None:
+    def __init__(self, seed: np.uint16, pop_size: np.uint16, epi_cnt_max: np.uint16, cores: int,
+                 mut_ran_p: np.float32 = np.float32(.45), mut_smt_p: np.float32 = np.float32(.45), mut_non_p: np.float32 = np.float32(.1),
+                 smt_in_in_p: np.float32 = np.float32(.1), smt_in_out_p: np.float32 = np.float32(.45), smt_out_out_p: np.float32 = np.float32(.45)) -> None:
         """
         Main class for the evolutionary algorithm.
 
@@ -66,20 +72,73 @@ class EA:
         print('dashboard:', context.dashboard_url)
 
     # data loader
-    def DataLoader(self, path: str) -> pd.DataFrame:
+    def DataLoader(self, path: str, target_label: str = "y", split: float = 0.50) -> None:
         """
-        Function to load data from a file.
+        Function to load data from a csv file into a pandas dataframe.
+        We assume that the target label is 'y', unless otherwise specified.
+        At the end of the function, we partition the data into training and validation sets.
+        Additionally, we load the data into the ray object store and intialize hubs.
 
         Parameters:
         path: str
             Path to the file.
+        target_label: str
+            Name of the target label.
         """
 
-        pass
+        print('Loading data...')
 
-    # data checker
-    # Function to check for validity of dataset
-    def _check_dataset(self, features, target, sample_weight=None):
+        # save target variable
+        self.target_label = target_label
+
+        # check if the path is valid
+        if os.path.isfile(path) == False:
+            # load the data
+            exit('Error: The path provided is not valid. Please provide a valid path to the data file.', -1)
+
+        # get pandas dataframe snp names without loading all data
+        self.snp_labels = pd.read_csv(path, nrows=0, index_col=0).columns.tolist()
+
+        # check if the target label is valid
+        if target_label not in self.snp_labels:
+            exit('Error: The target label provided is not valid. Please provide a valid target label.', -1)
+
+        # remove target label from snp labels
+        self.snp_labels.remove(target_label)
+
+        # load the data
+        all_x = pd.read_csv(filepath_or_buffer=path, usecols=self.snp_labels)
+        all_y = pd.read_csv(filepath_or_buffer=path, usecols=[self.target_label]).values.ravel()
+
+        # check if the data was loaded correctly
+        all_x, all_y = self.CheckDataset(all_x, all_y)
+        print('X_data.shape:', all_x.shape)
+        print('y_data.shape:', all_y.shape)
+        print()
+
+        # partition data based splits
+        self.X_train, self.X_val, self.y_train, self.y_val = train_test_split(all_x, all_y, test_size=split, random_state=self.seed)
+
+        # check if the data was partitioned correctly
+        self.X_train, self.y_train = self.CheckDataset(self.X_train, self.y_train)
+        self.X_val, self.y_val = self.CheckDataset(self.X_val, self.y_val)
+
+        # load data into ray object store
+        self.X_train_id = ray.put(self.X_train)
+        self.y_train_id = ray.put(self.y_train)
+        self.X_val_id = ray.put(self.X_val)
+        self.y_val_id = ray.put(self.y_val)
+
+        print('X_train.shape:', self.X_train.shape)
+        print('y_train.shape:', self.y_train.shape)
+        print('X_val.shape:', self.X_val.shape)
+        print('y_val.shape:', self.y_val.shape)
+        print()
+
+        print('Data loaded successfully.')
+
+    # data checker to check for validity of dataset
+    def CheckDataset(self, features, target):
         """
         Check if a dataset has a valid feature set and labels.
 
@@ -91,49 +150,26 @@ class EA:
             List of class labels for prediction
         sample_weight: array-like {n_samples} (optional)
             List of weights indicating relative importance
-        Returns
-        -------
-        (features, target)
         """
-        # Check sample_weight
-        if sample_weight is not None:
-            try:
-                sample_weight = np.array(sample_weight, dtype=np.float32)
-            except ValueError as e:
-                raise ValueError(
-                    "sample_weight could not be converted to numpy.float32: %s" % e
-                )
-            if np.any(np.isnan(sample_weight)):
-                raise ValueError("sample_weight contained NaN values.")
-            try:
-                check_consistent_length(sample_weight, target)
-            except ValueError as e:
-                raise ValueError(
-                    "sample_weight dimensions did not match target: %s" % e
-                )
-        # check for features
-        if isinstance(features, np.ndarray):
-                if np.any(np.isnan(features)):
-                    self._imputed = True
-        elif isinstance(features, pd.DataFrame):
+        # check for missing values
+        if isinstance(features, pd.DataFrame):
                 if features.isnull().values.any():
-                    self._imputed = True
-        if self._imputed:
-                features = self._impute_values(features)
+                    exit('Error: Input data contains missing values. Please impute the missing values before running.', -1)
+
         # check for target
         try:
             if target is not None:
                 X, y = check_X_y(features, target, accept_sparse=True, dtype=None)
-                if self._imputed:
-                    return X, y
-                else:
-                    return features, target
+                # if self._imputed:
+                #     return X, y
+                # else:
+                return features, target
             else:
                 X = check_array(features, accept_sparse=True, dtype=None)
-                if self._imputed:
-                    return X
-                else:
-                    return features
+            #     if self._imputed:
+            #         return X
+            #     else:
+                return features
         except (AssertionError, ValueError):
             raise ValueError(
                 "Error: Input data is not in a valid format. Please confirm "
@@ -142,14 +178,32 @@ class EA:
                 "1-D array."
             )
 
+    def IntializeHubs(self, bin_size:int) -> None:
+        """
+        Function to initialize the hubs for the evolutionary algorithm.
+        This function must be called after the data has been loaded.
+
+        Parameters
+        ----------
+        hub_size: int
+            Number of hubs to initialize.
+        """
+        # initialize the hubs
+        self.hubs = GenoHub(snps=self.snp_labels, bin_size=np.uint16(bin_size))
+
+
+
     # Run NSGA-II for a specified number of generations
-    def Evolve(self, gens: np.uint16, X_train, y_train, X_validate, y_validate) -> None:
+    # All functions below are EA specific
+
+    def Evolve(self, gens: np.uint16) -> None:
         """
         Function to evovle pipelines using the NSGA-II algorithm for a user specified number of generations.
         We also take in the training and validation data to evaluate the pipelines.
 
         Parameters:
-        g
+        gens: np.uint16
+            Number of generations to run the algorithm.
 
         """
 
@@ -176,3 +230,44 @@ class EA:
             # select surviving pipelines
             # TODO: make sure that the np,concatenate is correctly stacking the scores
             self.SurvivialSelection(np.concatenate((pop_obj_scores, off_obj_scores), axis=None))
+
+    def InitializePopulation(self):
+        pass
+
+    def Evaluation(self, pop: List[Pipeline]) -> npt.NDArray[np.float32]:
+        pass
+
+    def ParentSelection(self, pop_scores: npt.NDArray[np.float32]) -> List[Pipeline]:
+        pass
+
+    def Reproduction(self, parents: List[Pipeline]) -> List[Pipeline]:
+        pass
+
+    def SurvivialSelection(self, scores: npt.NDArray[np.float32]) -> None:
+        pass
+
+
+def main():
+
+    ea_config = {'seed': np.uint16(0),
+                 'pop_size': np.uint16(100),
+                 'epi_cnt_max': np.uint16(100),
+                 'cores': 10,
+                 'mut_ran_p':np.float32(.45),
+                 'mut_smt_p': np.float32(.45),
+                 'mut_non_p': np.float32(.1),
+                 'smt_in_in_p': np.float32(.1),
+                 'smt_in_out_p': np.float32(.45),
+                 'smt_out_out_p': np.float32(.45)}
+
+    ea = EA(**ea_config)
+    ea.DataLoader('/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/pruned_ratdata_bmitail_onSNPnum.csv')
+    ea.IntializeHubs(10)
+    # time.sleep(20)
+
+    ray.shutdown()
+
+
+
+if __name__ == "__main__":
+    main()
