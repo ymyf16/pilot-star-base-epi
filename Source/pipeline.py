@@ -8,11 +8,11 @@ import numpy as np
 
 class Pipeline:
     def __init__(self,
-                 epi_pairs: List[List], 
+                 epi_pairs: List[tuple], 
                  epi_branches: List[EpiNode], # each branch consists of one EpiNode
                  selector_node: ScikitNode,
                  root_node: ScikitNode, 
-                 traits: Dict[int, float], 
+                 traits: Dict[float, int], # r2 value and the no of features in the final regressor
                  clone: bool = False,
                  max_feature_count: int = 10):    
         
@@ -32,12 +32,13 @@ class Pipeline:
     def get_feature_count(self):
         return self.selector_node.get_feature_count()
     
+
     # method to get the selector node
     def get_selector_node(self):
         return self.selector_node
     
     # method to get the root node
-    def get_root_nood(self):
+    def get_root_node(self):
         return self.root_node
     
     # predict method
@@ -92,20 +93,40 @@ class Pipeline:
         num_epi_nodes = rng.integers(2, self.max_feature_count)  # Randomly select how many EpiNodes to create - upper bound to be provided by user.
         epi_branches = []
         epi_pairs = []
+        unique_epi_pairs = set()
         for _ in range(num_epi_nodes):
             selected_epi_node_class = rng.choice(epi_nodes)
             #num_snps = 2  # for 2-way interactions
             #interacting_features = [rng.randint(0, 1000, size=num_snps)]  # Random numpy array indexes
             epi_node_instance = selected_epi_node_class.__class__(name=f"{selected_epi_node_class.__class__.__name__}_{_}", rng=rng, header_list = header_list) 
+            
             epi_branches.append(epi_node_instance)
+            
             # epi_pairs.append((epi_node_instance.snp1_name, epi_node_instance.snp2_name))
+
+        # while len(epi_branches) < num_epi_nodes:
+        #     # Select a random epi node class and instantiate it
+        #     selected_epi_node_class = rng.choice(epi_nodes)
+        #     epi_node_instance = selected_epi_node_class.__class__(name=f"{selected_epi_node_class.__class__.__name__}_{len(epi_branches)}",
+        #                                                       rng=rng, header_list=header_list)
+
+        #     # Ensure that this epi node's SNP pair is unique
+        #     snp_pair = (epi_node_instance.snp1_name, epi_node_instance.snp2_name)
+        #     if snp_pair in unique_epi_pairs or snp_pair[::-1] in unique_epi_pairs:
+        #         # Duplicate found, skip this node
+        #         continue
+
+        #     # Add unique pair and instance to lists
+        #     unique_epi_pairs.add(snp_pair)
+        #     epi_branches.append(epi_node_instance)
 
         # Create the pipeline using the generated nodes
         pipeline = Pipeline(epi_pairs=epi_pairs,
-                            epi_branches=epi_branches,
+                            epi_branches=epi_branches, # probably should pass set(epi_branches)
                             selector_node=selector_node,
                             root_node=root_node,
                             traits={})
+        print("Branches in the pipeline:", epi_branches)
 
         # Create and return the pipeline
         return pipeline

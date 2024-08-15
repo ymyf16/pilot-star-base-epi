@@ -4,13 +4,13 @@
 from abc import ABC, abstractmethod
 from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
 import numpy as np
-from sklearn.feature_selection import VarianceThreshold, SelectPercentile, SelectFwe, SelectFromModel, SequentialFeatureSelector
+from sklearn.feature_selection import VarianceThreshold, SelectPercentile, SelectFwe, SelectFromModel, SequentialFeatureSelector, f_regression
 from sklearn.linear_model import LinearRegression, ElasticNet, SGDRegressor, Lasso
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
 from sklearn.svm import SVR
 from sklearn.neural_network import MLPRegressor
-from rng import NumpyRNG
+
 
 
 class ScikitNode(BaseEstimator, ABC):
@@ -53,7 +53,7 @@ class VarianceThresholdNode(ScikitNode, TransformerMixin):
         return self.selector.transform(X)
     
     def mutate(self, rng):
-        if rng.check_probablity(0.5): # ask Jose about the probability anddiscuss about normal/uniform distribution
+        if rng.check_probablity(0.5): # ask Jose about the probability and discuss about normal/uniform distribution
             self.params['threshold'] = self.params['threshold'] + rng.uniform(low=0.0, high=1.0) # default loc=0.0, scale=1.0
         else:
             self.params['threshold'] = self.params['threshold'] - rng.uniform(low=0.0, high=1.0)
@@ -63,13 +63,18 @@ class VarianceThresholdNode(ScikitNode, TransformerMixin):
     def get_feature_count(self):
         return self.selector.get_support().sum()
     
+    def get_feature_names_out(self):
+        return self.features[self.selector.get_support()]
+    
 # select percentile
 class SelectPercentileNode(ScikitNode, TransformerMixin):
     def __init__(self, name='SelectPercentile', params = None, rng = None):
         super().__init__(name)
         self.rng = rng
-        self.params = {'percentile': rng.integers(low=0, high=100), 'score_func': 'f_regression'} # should we change low for percentile to 10? 
-        self.selector = SelectPercentile(score_func=self.params['score_func'], percentile=self.params['percentile'])
+        self.params = {'percentile': rng.integers(low=0, high=100), 'score_func': f_regression} # should we change low for percentile to 10? 
+        # if params['score_func'] == 'f_regression':
+        #     params['score_func'] = f_regression
+        self.selector = SelectPercentile(score_func=self.params['score_func'], percentile=self.params['percentile'])       
 
     def fit(self, X, y):
         self.selector.fit(X, y)
@@ -87,6 +92,9 @@ class SelectPercentileNode(ScikitNode, TransformerMixin):
 
     def get_feature_count(self):
         return self.selector.get_support().sum()
+    
+    def get_feature_names_out(self):
+        return self.features[self.selector.get_support()]
     
 # select fwe
 class SelectFweNode(ScikitNode, TransformerMixin):
@@ -112,8 +120,10 @@ class SelectFweNode(ScikitNode, TransformerMixin):
 
     def get_feature_count(self):
         return self.selector.get_support().sum()
-
     
+    def get_feature_names_out(self):
+        return self.features[self.selector.get_support()]
+ 
 # select from model using L1-based feature selection (model is lasso regression)
 class SelectFromModelLasso(ScikitNode, TransformerMixin):
     def __init__(self, name='SelectFromLasso', params = None, rng = None):
@@ -138,6 +148,9 @@ class SelectFromModelLasso(ScikitNode, TransformerMixin):
 
     def get_feature_count(self,):
         return self.selector.get_support().sum()
+    
+    def get_feature_names_out(self):
+        return self.features[self.selector.get_support()]
     
 # select from model using tree-based feature selection (model is ExtraTreesRegressor)
 class SelectFromModelTree(ScikitNode, TransformerMixin):
@@ -164,6 +177,9 @@ class SelectFromModelTree(ScikitNode, TransformerMixin):
     def get_feature_count(self):
         return self.selector.get_support().sum()
     
+    def get_feature_names_out(self):
+        return self.features[self.selector.get_support()]
+    
 # sequential feature selector, model = RandomForestRegressor, need to discuss with the team
 class SequentialFeatureSelectorNode(ScikitNode, TransformerMixin):
     def __init__(self, name='SequentialFeatureSelectorRF', params = None, rng = None):
@@ -188,6 +204,9 @@ class SequentialFeatureSelectorNode(ScikitNode, TransformerMixin):
 
     def get_feature_count(self):
         return self.selector.get_support().sum()
+    
+    def get_feature_names_out(self):
+        return self.features[self.selector.get_support()]
     
 ############################################### the regressor classes ################################################
 
