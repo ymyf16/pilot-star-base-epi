@@ -6,10 +6,13 @@ from sklearn.pipeline import FeatureUnion
 from sklearn.base import BaseEstimator, TransformerMixin
 from typing import List, Dict
 import numpy as np
+from typeguard import typechecked
 
-class Pipeline_Builder:
+@typechecked # for debugging purposes
+class PipelineBuilder:
     def __init__(self, pipeline: Pipeline):
         self.pipeline = pipeline
+        self.fitted_pipeline = None
 
     def build_sklearn_pipeline(self) -> SklearnPipeline:
         # Create a dictionary to hold the steps for the scikit-learn pipeline
@@ -42,8 +45,70 @@ class Pipeline_Builder:
 
         # Fit the pipeline
         skl_pipeline_fitted = skl_pipeline.fit(X, y)
+        self.fitted_pipeline = skl_pipeline_fitted
 
-        # # Make predictions
-        # predictions = skl_pipeline.predict(X)
+        # Collect SNP pairs from each epi node after fitting [(snp1, lo, snp2),...]
+        self.pipeline.epi_pairs = [(epi_node.snp1_name, epi_node.logical_operator, epi_node.snp2_name) for epi_node in self.pipeline.epi_branches]
+
+        # Debugging information
+        # print("Epi pairs:", self.pipeline.epi_pairs)
 
         return skl_pipeline_fitted
+
+    def fit(self, X, y):
+        # fit the pipeline
+        skl_pipeline_fitted = self.evaluate_pipeline(X, y)
+        return skl_pipeline_fitted
+
+    def predict(self, X):
+        # assume that the sklearn pipeline is already built and fitted
+        if self.fitted_pipeline is None:
+            raise ValueError("Pipeline is not fitted yet.")
+
+        # Make predictions
+        predictions = self.predict(X)
+
+        return predictions
+
+    def score(self, X, y):
+        # assume that the sklearn pipeline is already built and fitted
+        if self.fitted_pipeline is None:
+            exit("Pipeline is not fitted yet.", 0)
+
+        # Score the pipeline
+        r2 = self.fitted_pipeline.score(X, y)
+
+        # get the total number of features in the pipeline
+        feature_count = self.pipeline.get_feature_count()
+        final_fetaure_names = self.pipeline.get_selector_node().selector.get_feature_names_out()
+        # print("Final Feature Names:", final_fetaure_names)
+
+        # set the pipeline's traits
+        self.pipeline.traits = {"r2_score": r2, "feature_count": feature_count}
+
+        # print("Pipeline Traits:", self.pipeline.traits)
+
+
+        return r2, feature_count
+
+    def get_final_epi_pairs(self):
+        if self.fitted_pipeline is None:
+            exit("Pipeline is not fitted yet.", 0)
+
+        # Access the selector node from the fitted pipeline
+        selector_node = self.fitted_pipeline.named_steps.get('selector', None)
+
+        if selector_node is None:
+            exit("Selector node is not found in the pipeline.", 0)
+
+        # Get selected feature indices from the selector
+        selected_indices = selector_node.selector.get_support(indices=True)
+        print("Selected Indices:", selected_indices)
+        print("No of branches after selection:", len(selected_indices))
+
+        # Retrieve final epi pairs based on selected indices
+        final_epi_pairs = []
+        for index in selected_indices:
+            final_epi_pairs.append(self.pipeline.epi_pairs[index])
+
+        return final_epi_pairs
