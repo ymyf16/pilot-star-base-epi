@@ -4,7 +4,7 @@
 from abc import ABC, abstractmethod
 from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
 import numpy as np
-from sklearn.feature_selection import VarianceThreshold, SelectPercentile, SelectFwe, SelectFromModel, SequentialFeatureSelector
+from sklearn.feature_selection import VarianceThreshold, SelectPercentile, SelectFwe, SelectFromModel, SequentialFeatureSelector, f_regression
 from sklearn.linear_model import LinearRegression, ElasticNet, SGDRegressor, Lasso
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
@@ -27,11 +27,6 @@ class ScikitNode(BaseEstimator, ABC):
     def fit_transform(self, X, y=None):
         self.fit(X, y)
         return self.transform(X)
-
-# check_probablity function definition
-def check_probability(self, probability):
-    return self.rng.uniform(0, 1) < probability
-
 
 
 ############################################### the feature selector classes ################################################
@@ -66,7 +61,7 @@ class SelectPercentileNode(ScikitNode, TransformerMixin):
     def __init__(self, name='SelectPercentile', params = None, rng = None):
         super().__init__(name)
         self.rng = rng
-        self.params = {'percentile': rng.integers(low=0, high=100), 'score_func': 'f_regression'} # should we change low for percentile to 10?
+        self.params = {'percentile': rng.integers(low=0, high=100), 'score_func': f_regression} # should we change low for percentile to 10?
         self.selector = SelectPercentile(score_func=self.params['score_func'], percentile=self.params['percentile'])
 
     def fit(self, X, y):
@@ -91,7 +86,7 @@ class SelectFweNode(ScikitNode, TransformerMixin):
     def __init__(self, name='SelectFwe', params = None, rng = None):
         super().__init__(name)
         self.rng = rng
-        self.params = {'alpha': rng.uniform(low=0.0, high=0.05), 'score_func': 'f_regression'}
+        self.params = {'alpha': rng.uniform(low=0.0, high=0.05), 'score_func': f_regression}
         self.selector = SelectFwe(score_func=self.params['score_func'], alpha=self.params['alpha'])
 
     def fit(self, X, y):
