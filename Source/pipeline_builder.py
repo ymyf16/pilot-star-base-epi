@@ -48,7 +48,7 @@ class PipelineBuilder:
         self.fitted_pipeline = skl_pipeline_fitted
 
         # Collect SNP pairs from each epi node after fitting [(snp1, lo, snp2),...]
-        self.pipeline.epi_pairs = [(epi_node.snp1_name, epi_node.logical_operator, epi_node.snp2_name) for epi_node in self.pipeline.epi_branches]
+        self.pipeline.epi_pairs = [(epi_node.get_snp1_name(), epi_node.get_lo(), epi_node.get_snp2_name()) for epi_node in self.pipeline.epi_branches]
 
         # Debugging information
         # print("Epi pairs:", self.pipeline.epi_pairs)
