@@ -281,7 +281,7 @@ class EA:
         # create the initial population
         for _ in range(self.pop_size):
             # create a pipeline
-            pipeline = Pipeline(epi_pairs=[], epi_branches=[], selector_node=None, root_node=None, traits={}, \
+            pipeline = Pipeline(epi_pairs=set(), epi_branches=[], selector_node=None, root_node=None, traits={}, \
                 clone=False, max_feature_count=self.epi_cnt_max).generate_random_pipeline(self.rng, self.snp_labels)
 
             # print('#'*100)
