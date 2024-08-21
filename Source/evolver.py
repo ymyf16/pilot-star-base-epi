@@ -22,10 +22,42 @@ from sklearn.model_selection import train_test_split
 import time
 from geno_hub import GenoHub
 from pipeline_builder import PipelineBuilder
+from typing import List, Tuple
 
 
 @ray.remote
-def ray_eval(x_train, y_train, x_val, y_val, pipeline):
+def ray_eval(x_train, y_train, x_val, y_val, pipeline) -> Tuple[np.float32, np.uint16]:
+    assert isinstance(pipeline, Pipeline)
+
+    # if pipeline is a clone return the traits
+    if pipeline.clone:
+        return pipeline.traits['r2'], pipeline.traits['feature_cnt']
+
+    # transform internal pipeline representation into sklearn pipeline with PipelineBuilder class
+    pipeline_builder = PipelineBuilder(pipeline)
+
+    # fit the sklearn pipeline
+    try:
+        skl_pipeline_fitted = pipeline_builder.fit(x_train, y_train)
+    except Exception as e:
+        # Catch any exceptions and print an error message
+        print(f"An error occurred while fitting the model: {e}")
+        return 0.0, 0
+
+    # get the traits
+    score, feature_count = pipeline_builder.score(x_val, y_val) # validation traits
+
+    # return the pipeline
+    return np.float32(score), np.uint16(feature_count)
+
+# for debugging in serial
+def eval(x_train, y_train, x_val, y_val, pipeline) -> Tuple[np.float32, np.uint16]:
+    assert isinstance(pipeline, Pipeline)
+
+    # if pipeline is a clone return the traits
+    if pipeline.clone:
+        return pipeline.traits['r2'], pipeline.traits['feature_cnt']
+
     # transform internal pipeline representation into sklearn pipeline with PipelineBuilder class
     pipeline_builder = PipelineBuilder(pipeline)
 
@@ -36,7 +68,7 @@ def ray_eval(x_train, y_train, x_val, y_val, pipeline):
     score, feature_count = pipeline_builder.score(x_val, y_val) # validation traits
 
     # return the pipeline
-    return score, feature_count
+    return np.float32(score), np.uint16(feature_count)
 
 @typechecked # for debugging purposes
 class EA:
@@ -224,13 +256,12 @@ class EA:
         # create the initial population
         self.initialize_population()
 
-        # for gen in range(gens):
+        for gen in range(gens):
 
-            # print('generation:', gen)
+            print('generation:', gen)
 
-            # evaluate the initial population
-            # transform pipeline into scikit learn pipeline
-            # pop_obj_scores = self.evaluation(self.population)
+            # evaluate the population
+            pop_obj_scores = self.evaluation(self.population)
 
 
             # select parent pipelines
@@ -253,8 +284,9 @@ class EA:
             pipeline = Pipeline(epi_pairs=[], epi_branches=[], selector_node=None, root_node=None, traits={}, \
                 clone=False, max_feature_count=self.epi_cnt_max).generate_random_pipeline(self.rng, self.snp_labels)
 
-            print('#'*100)
-            pipeline.print_pipeline()
+            # print('#'*100)
+            # pipeline.print_pipeline()
+            # print('#'*100)
 
             self.population.append(pipeline)
 
@@ -262,11 +294,18 @@ class EA:
         assert all(isinstance(x, Pipeline) for x in self.population)
 
     def evaluation(self, pop: List[Pipeline]) -> npt.NDArray[np.float32]:
-        # convert to sklearn pipeline
-        # send to ray for eval
-        # get back scores and set them in pipeline (traits)
-        # return scores [(r2, complexity),....]
-        pass
+        # create a list of futures for each pipeline in the population to be evaluated
+        futures = [ray_eval.remote(self.X_train_id, self.y_train_id, self.X_val_id, self.y_val_id, pipeline) for pipeline in pop]
+        results = ray.get(futures)
+
+        # results = [eval(self.X_train, self.y_train, self.X_val, self.y_val, pipeline) for pipeline in pop] # for debugging in serial
+
+        print('results')
+        for res in results:
+            print(res)
+
+
+        return np.asarray([0.0], dtype=np.float32)
 
     def parent_selection(self, pop_scores: npt.NDArray[np.float32]) -> List[Pipeline]:
         pass
@@ -279,17 +318,10 @@ class EA:
 
 
 def main():
-
-    # x = np.array(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'], dtype=np.str_)
-    # print(x)
-    # print('type:', type(x))
-    # print('x[0]:', x[0])
-    # print('type:', type(x[0]))
-
-
+    # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
-                 'pop_size': np.uint16(5),
-                 'epi_cnt_max': np.uint16(5),
+                 'pop_size': np.uint16(100),
+                 'epi_cnt_max': np.uint16(250),
                  'cores': 10,
                  'mut_ran_p':np.float32(.45),
                  'mut_smt_p': np.float32(.45),
@@ -299,7 +331,9 @@ def main():
                  'smt_out_out_p': np.float32(.45)}
 
     ea = EA(**ea_config)
-    ea.data_loader('/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/pruned_ratdata_bmitail_onSNPnum.csv')
+    # need to update the path to the data file
+    data_dir = '/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/pruned_ratdata_bmitail_onSNPnum.csv'
+    ea.data_loader(data_dir)
     ea.initialize_hubs(100)
 
     ea.evolve(1)
