@@ -28,6 +28,10 @@ class ScikitNode(BaseEstimator, ABC):
         self.fit(X, y)
         return self.transform(X)
 
+    @abstractmethod
+    def mutate(self, rng):
+        pass
+
 
 ############################################### the feature selector classes ################################################
 
@@ -46,7 +50,7 @@ class VarianceThresholdNode(ScikitNode, TransformerMixin):
         return self.selector.transform(X)
 
     def mutate(self, rng):
-        if rng.check_probablity(0.5): # ask Jose about the probability anddiscuss about normal/uniform distribution
+        if rng.uniform() <= 0.5: # ask Jose about the probability anddiscuss about normal/uniform distribution
             self.params['threshold'] = self.params['threshold'] + rng.uniform(low=0.0, high=1.0) # default loc=0.0, scale=1.0
         else:
             self.params['threshold'] = self.params['threshold'] - rng.uniform(low=0.0, high=1.0)
@@ -70,11 +74,24 @@ class SelectPercentileNode(ScikitNode, TransformerMixin):
     def transform(self, X):
         return self.selector.transform(X)
 
-    def mutate(self, rng):
-        if rng.check_probablity(0.5):
-            self.params['percentile'] = self.params['percentile'] + rng.integers(low=0, high=100 - self.params['percentile'])
+    def mutate(self, rng: np.random.Generator):
+        # maginitude we are shfiting the percentile
+        shift = rng.integers(low=1, high=10, endpoint=True)
+
+        # do we increase?
+        if rng.choice([True, False]):
+            # check if we go over 100 and if so set it to 100
+            if self.params['percentile'] + shift >= 100:
+                self.params['percentile'] = 100
+            else:
+                self.params['percentile'] = self.params['percentile'] + shift
+        # do we decrease?
         else:
-            self.params['percentile'] = self.params['percentile'] - rng.integers(low=0, high=self.params['percentile'])
+            # check if we go under 1 and if so set it to 1
+            if self.params['percentile'] - shift <= 1:
+                self.params['percentile'] = 1
+            else:
+                self.params['percentile'] = self.params['percentile'] - shift
 
         self.selector = SelectPercentile(score_func=self.params['score_func'], percentile=self.params['percentile'])
 
@@ -96,7 +113,7 @@ class SelectFweNode(ScikitNode, TransformerMixin):
         return self.selector.transform(X)
 
     def mutate(self, rng):
-        if rng.check_probablity(0.5):
+        if rng.uniform() <= 0.5:
             self.params['alpha'] = self.params['alpha'] + rng.uniform(low=0.0, high=0.05 - self.params['alpha'])
         else:
             self.params['alpha'] = self.params['alpha'] - rng.uniform(low=0.0, high=self.params['alpha'])
@@ -122,7 +139,7 @@ class SelectFromModelLasso(ScikitNode, TransformerMixin):
         return self.selector.transform(X)
 
     def mutate(self, rng):
-        if rng.check_probablity(0.5):
+        if rng.uniform() <= 0.5:
             self.params['threshold'] = 'mean'
         else:
             self.params['threshold'] = 'median'
@@ -147,7 +164,7 @@ class SelectFromModelTree(ScikitNode, TransformerMixin):
         return self.selector.transform(X)
 
     def mutate(self, rng):
-        if rng.check_probablity(0.5):
+        if rng.uniform() <= 0.5:
             self.params['threshold'] = 'mean'
         else:
             self.params['threshold'] = 'median'
@@ -172,9 +189,12 @@ class SequentialFeatureSelectorNode(ScikitNode, TransformerMixin):
         return self.selector.transform(X)
 
     def mutate(self, rng):
-        if rng.check_probablity(0.5):
+        print('SequentialFeatureSelectorNode-mutate')
+        if rng.uniform() <= 1.0:
+            print('HELLOW WORLD')
             self.params['tol'] = self.params['tol'] + rng.uniform(low = 0, high = 1)
         else:
+            print('HELLOW WORLDdddddddd')
             self.params['tol'] = self.params['tol'] - rng.uniform(low = 0, high = 1)
 
         self.selector = SequentialFeatureSelector(estimator=self.params['estimator'], tol=self.params['tol'])
@@ -224,7 +244,7 @@ class ElasticNetNode(ScikitNode, RegressorMixin):
         return self.predict(X)
 
     def mutate(self, rng):
-        if rng.check_probablity(0.5):
+        if rng.uniform() <= 0.5:
             self.params['alpha'] = self.params['alpha'] + rng.uniform(low = 0, high = 1)
             self.params['l1_ratio'] = self.params['l1_ratio'] + rng.uniform(low = 0, high = 1)
         else:
