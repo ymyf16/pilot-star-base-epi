@@ -15,116 +15,24 @@ import copy as cp
 import pandas as pd
 import sys, os
 import ray
-from pipeline import Pipeline
-import nsga_toolbox as nsga
+# from pipeline import Pipeline
+# import nsga_toolbox as nsga
 from sklearn.model_selection import train_test_split
 import time
 from geno_hub import GenoHub
-from pipeline_builder import PipelineBuilder
+# from pipeline_builder import PipelineBuilder
 from sklearn.ensemble import RandomForestRegressor
 from typing import List, Tuple, Dict, Set
-import reproduction_toolbox as repo_tool
-from epi_nodes import EpiCartesianNode, EpiXORNode, EpiPAGERNode, EpiRRNode, EpiRDNode, EpiTNode, EpiModNode, EpiDDNode, EpiM78Node, EpiNode
-from scikit_nodes import ScikitNode, VarianceThresholdNode, SelectPercentileNode, SelectFweNode, SelectFromModelLasso, SelectFromModelTree
-from scikit_nodes import SequentialFeatureSelectorNode, LinearRegressionNode, RandomForestRegressorNode, SGDRegressorNode, DecisionTreeRegressorNode
-from scikit_nodes import ElasticNetNode, SVRNode, GradientBoostingRegressorNode, MLPRegressorNode
+# import reproduction_toolbox as repo_tool
+# from epi_nodes import EpiCartesianNode, EpiXORNode, EpiPAGERNode, EpiRRNode, EpiRDNode, EpiTNode, EpiModNode, EpiDDNode, EpiM78Node, EpiNode
+# from scikit_nodes import ScikitNode, VarianceThresholdNode, SelectPercentileNode, SelectFweNode, SelectFromModelLasso, SelectFromModelTree
+# from scikit_nodes import SequentialFeatureSelectorNode, LinearRegressionNode, RandomForestRegressorNode, SGDRegressorNode, DecisionTreeRegressorNode
+# from scikit_nodes import ElasticNetNode, SVRNode, GradientBoostingRegressorNode, MLPRegressorNode
 from sklearn.pipeline import Pipeline as SklearnPipeline
 
 # import linear regression from scikit-learn
 from sklearn.linear_model import LinearRegression
 
-@ray.remote
-def ray_eval(x_train, y_train, x_val, y_val, pipeline) -> Tuple[np.float32, np.uint16]:
-    assert isinstance(pipeline, Pipeline)
-
-    # transform internal pipeline representation into sklearn pipeline with PipelineBuilder class
-    pipeline_builder = PipelineBuilder(pipeline)
-
-    # fit the sklearn pipeline
-    try:
-        skl_pipeline_fitted = pipeline_builder.fit(x_train, y_train)
-    except Exception as e:
-        # Catch any exceptions and print an error message
-        print(f"An error occurred while fitting the model: {e}")
-        return 0.0, 0
-
-    # get the traits
-    score, feature_count = pipeline_builder.score(x_val, y_val) # validation traits
-
-    # return the pipeline
-    return np.float32(score), np.uint16(feature_count)
-
-@ray.remote
-def ray_lo_eval(x_train, y_train, x_val, y_val, snp1_name: np.str_, snp2_name: np.str_, snp1_pos: np.uint32,
-                snp2_pos: np.uint32) -> Tuple[np.float32, np.str_, np.uint32, np.uint32]:
-    # hold results
-    best_epi = ''
-    best_res = -1.0
-
-    # holds all lo's we are going to evaluate
-    epis = {np.str_('cartesian'): EpiCartesianNode,
-            np.str_('xor'): EpiXORNode,
-            np.str_('pager'): EpiPAGERNode,
-            np.str_('rr'): EpiRRNode,
-            np.str_('rd'): EpiRDNode,
-            np.str_('t'): EpiTNode,
-            np.str_('mod'): EpiModNode,
-            np.str_('dd'): EpiDDNode,
-            np.str_('m78'): EpiM78Node
-            }
-
-    # iterate over the epi node types and create sklearn pipeline
-    print('interaction:', snp1_name, snp2_name)
-    for lo, epi in epis.items():
-        steps = []
-        # create the epi node
-        epi_node = epi(name=lo, snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos)
-        steps.append((lo, epi_node))
-
-        # add random forrest regressor
-        # keep random_state 0 bc attri said so
-        # steps.append(('regressor', RandomForestRegressor(n_estimators=100, random_state=42)))
-        steps.append(('regressor', LinearRegression()))
-
-        # create the pipeline
-        skl_pipeline = SklearnPipeline(steps=steps)
-
-        # Fit the pipeline
-        skl_pipeline_fitted = skl_pipeline.fit(x_train, y_train)
-
-        # get score
-        r2 = skl_pipeline_fitted.score(x_val, y_val)
-
-        print('lo:', lo, 'r2:', r2)
-
-        # check if this is the best lo
-        if r2 > best_res:
-            best_res = r2
-            best_epi = lo
-
-    exit(0)
-
-    return np.float32(best_res), np.str_(best_epi), snp1_pos, snp2_pos
-
-# for debugging in serial
-def eval(x_train, y_train, x_val, y_val, pipeline) -> Tuple[np.float32, np.uint16]:
-    assert isinstance(pipeline, Pipeline)
-
-    # if pipeline is a clone return the traits
-    if pipeline.clone:
-        return pipeline.traits['r2'], pipeline.traits['feature_cnt']
-
-    # transform internal pipeline representation into sklearn pipeline with PipelineBuilder class
-    pipeline_builder = PipelineBuilder(pipeline)
-
-    # fit the sklearn pipeline
-    skl_pipeline_fitted = pipeline_builder.fit(x_train, y_train)
-
-    # get the traits
-    score, feature_count = pipeline_builder.score(x_val, y_val) # validation traits
-
-    # return the pipeline
-    return np.float32(score), np.uint16(feature_count)
 
 @typechecked # for debugging purposes
 class EA:
@@ -324,7 +232,42 @@ class EA:
         """
 
         # create the initial population
-        # self.initialize_population()
+        self.initialize_population()
+
+
+    def initialize_population(self) -> None:
+        """
+        Function to initialize the population of pipelines.
+        We start by creating a random set of interactions and determine their best lo.
+        We then create a epi_node for each interaction and lo.
+        Once we have all epi_nodes, we create a pipeline with a random selector and regressor.
+        """
+        pop_epi_interactions = []
+
+        # create the initial population
+        for _ in range(self.pop_size):
+            # how many epi nodes to create
+            # lower bound will be half of what the user specified
+            # upper bound will be the actual user specified mas
+            epi_cnt = self.rng.integers(int(self.epi_cnt_max * 0.5), self.epi_cnt_max)
+
+            # holds all interactions we are doing
+            # set to make sure we don't have duplicates
+            interactions = set()
+
+            # while we have not reached the max number of epi nodes
+            while len(interactions) < epi_cnt:
+                # get random snp1 and snp2 and add to interactions
+                interactions.add(self.hubs.get_ran_interaction(self.rng))
+
+            # add to the population
+            pop_epi_interactions.append(interactions)
+
+        # find all unique interactions
+        # set() = {(snp1_name, snp2_name),...}
+        unique_interactions = set()
+        for interactions in pop_epi_interactions:
+            unique_interactions.update(interactions)
 
 
 
@@ -347,9 +290,11 @@ def main():
 
     ea = EA(**ea_config)
     # need to update the path to the data file
-    data_dir = '/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/18qtl_pruned_BMIres.csv'
+    data_dir = '/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/pruned_ratdata_bmitail_onSNPnum.csv'
+    # data_dir = '/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/18qtl_pruned_BMIres.csv'
     ea.data_loader(data_dir)
-    ea.initialize_hubs(100)
+    ea.initialize_hubs(20)
+    ea.evolve(1)
 
 
     ray.shutdown()
