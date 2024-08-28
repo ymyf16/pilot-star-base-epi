@@ -128,21 +128,21 @@ class GenoHub:
             return
 
         # get snp sum
-        def get_snp_sum(self, snp: np.str_) -> np.float32:
+        def get_snp_sum(self, snp: gen_snp_t) -> snp_hub_sum_t:
             # assert that snp is in hub
             assert snp in self.hub
             # return data
             return np.float32(self.hub[snp][0])
 
         # get snp count
-        def get_snp_cnt(self, snp: np.str_) -> np.uint32:
+        def get_snp_cnt(self, snp: gen_snp_t) -> snp_hub_pos_t:
             # assert that snp is in hub
             assert snp in self.hub
             # return data
             return np.uint32(self.hub[snp][1])
 
         # get snp average. If count is zero, return sum
-        def get_snp_avg(self, snp: np.str_)-> np.float32:
+        def get_snp_avg(self, snp: gen_snp_t)-> snp_hub_sum_t:
             # assert that snp is in hub
             assert snp in self.hub
 
@@ -154,21 +154,21 @@ class GenoHub:
             return np.float32(self.hub[snp][0] / np.float32(self.hub[snp][1]))
 
         # get snp bin number
-        def get_snp_bin(self, snp: np.str_) -> bin_hub_size_t:
+        def get_snp_bin(self, snp: gen_snp_t) -> bin_hub_size_t:
             # assert that snp is in hub
             assert snp in self.hub
             # return data
             return bin_hub_size_t(self.hub[snp][2])
 
         # get snp header position
-        def get_snp_pos(self, snp: np.str_) -> snp_hub_pos_t:
+        def get_snp_pos(self, snp: gen_snp_t) -> snp_hub_pos_t:
             # assert that snp is in hub
             assert snp in self.hub
             # return data
             return snp_hub_pos_t(self.hub[snp][3])
 
         # update snp sum and count. If count is zero, set sum to value and increment count
-        def update_hub(self, snp: np.str_, value: np.float32) -> None:
+        def update_hub(self, snp: gen_snp_t, value: np.float32) -> None:
             # assert that snp is in hub
             assert snp in self.hub
 
@@ -185,7 +185,7 @@ class GenoHub:
                 return
 
         # get all averages for given snps
-        def get_all_avgs(self, snps: np.str_) -> npt.NDArray[np.float32]:
+        def get_all_avgs(self, snps: List[gen_snp_t]) -> npt.NDArray[snp_hub_sum_t]:
             # return all averages for given snps
             return np.array([self.get_snp_avg(snp) for snp in snps], dtype=np.float32)
 
@@ -267,7 +267,6 @@ class GenoHub:
                     sum += len(bin)
 
             return np.uint16(sum)
-
 
         # get all snps in a given bin with r2 > 0.0                       SNPS              weighted r2 scores > 0
         def get_snps_r2_in_bin(self, snp: np.str_, snp_hub) -> Tuple[npt.NDArray[np.str_], npt.NDArray[np.float32]]:
@@ -552,7 +551,7 @@ class GenoHub:
             return
 
     # initialize all hubs
-    def __init__(self, snps: npt.NDArray[np.str_], bin_size: np.uint16) -> None:
+    def __init__(self, snps: gen_header_snps_t, bin_size: bin_hub_size_t) -> None:
         # bin hub stuff
         print('Initializing GenoHub')
         self.bin_hub = self.Bin()
@@ -574,7 +573,30 @@ class GenoHub:
         # epi hub stuff
         self.epi = self.EPI()
         print('EPI Hub Initialized')
+        print()
         return
 
+    # get best lo for a given interaction
+    def get_interaction_lo(self, snp1: gen_snp_t, snp2: gen_snp_t) -> epi_hub_lo_t:
+        return self.epi.get_interaction_lo(snp1, snp2)
+
+    # get r2 for a given interaction from the epi hub
+    def get_interaction_res(self, snp1: gen_snp_t, snp2: gen_snp_t) -> epi_hub_res_t:
+        return self.epi.get_interaction_res(snp1, snp2)
+
+    # update epistatic hub and snp hub with new interaction and results
+    def update_epi_n_snp_hub(self, snp1: gen_snp_t, snp2: gen_snp_t, result: epi_hub_res_t, lo: epi_hub_lo_t) -> None:
+        self.epi.update_hub(snp1, snp2, result, lo)
+        return
+
+    # check if interaction is in the epi hub
+    def is_interaction_in_hub(self, snp1: gen_snp_t, snp2: gen_snp_t) -> bool:
+        return self.epi.is_interaction_in_hub(snp1, snp2)
+
+    # get snp position from the snp hub
+    def get_snp_pos(self, snp: gen_snp_t) -> snp_hub_pos_t:
+        return self.snp_hub.get_snp_pos(snp)
+
+    # get random interaction from snp_hub
     def get_ran_interaction(self, rng: gen_rng_t) -> Tuple[gen_snp_t, gen_snp_t]:
         return self.snp_hub.get_random_interaction(rng)

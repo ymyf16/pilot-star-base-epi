@@ -4,35 +4,123 @@
 # We use the NSGA-II algorithm to evolve pipelines.
 # Pipelines consist of a set of epistatic interactions, feature selector, and a final regressor.
 #
-# Python 3.12.4: conda activate star-epi-pre
 #####################################################################################################
 
 import numpy as np
 from typeguard import typechecked
 from typing import List
-import numpy.typing as npt
-import copy as cp
 import pandas as pd
-import sys, os
+import os
 import ray
-# from pipeline import Pipeline
+from pipeline import Pipeline
 # import nsga_toolbox as nsga
 from sklearn.model_selection import train_test_split
 import time
 from geno_hub import GenoHub
-# from pipeline_builder import PipelineBuilder
-from sklearn.ensemble import RandomForestRegressor
 from typing import List, Tuple, Dict, Set
-# import reproduction_toolbox as repo_tool
-# from epi_nodes import EpiCartesianNode, EpiXORNode, EpiPAGERNode, EpiRRNode, EpiRDNode, EpiTNode, EpiModNode, EpiDDNode, EpiM78Node, EpiNode
-# from scikit_nodes import ScikitNode, VarianceThresholdNode, SelectPercentileNode, SelectFweNode, SelectFromModelLasso, SelectFromModelTree
-# from scikit_nodes import SequentialFeatureSelectorNode, LinearRegressionNode, RandomForestRegressorNode, SGDRegressorNode, DecisionTreeRegressorNode
-# from scikit_nodes import ElasticNetNode, SVRNode, GradientBoostingRegressorNode, MLPRegressorNode
+from epi_node import EpiNode
+from epi_node import EpiCartesianNode, EpiXORNode, EpiPAGERNode, EpiRRNode, EpiRDNode, EpiTNode, EpiModNode, EpiDDNode, EpiM78Node, EpiNode
+from scikit_node import ScikitNode
 from sklearn.pipeline import Pipeline as SklearnPipeline
-
-# import linear regression from scikit-learn
+from sklearn.pipeline import FeatureUnion
 from sklearn.linear_model import LinearRegression
+from reproduction import Reproduction
 
+# snp name type
+snp_name_t = np.str_
+# snp hub position type
+snp_hub_pos_t = np.uint32
+# epi node list type
+epi_node_list_t = List[EpiNode]
+
+@ray.remote
+def ray_lo_eval(x_train,
+                y_train,
+                x_val,
+                y_val,
+                snp1_name: snp_name_t,
+                snp2_name: snp_name_t,
+                snp1_pos: snp_hub_pos_t,
+                snp2_pos: snp_hub_pos_t) -> Tuple[np.float32, np.str_, np.str_, np.str_]:
+    # hold results
+    best_epi = ''
+    best_res = -1.0
+
+    # holds all lo's we are going to evaluate
+    epis = {np.str_('cartesian'): EpiCartesianNode,
+            np.str_('xor'): EpiXORNode,
+            np.str_('pager'): EpiPAGERNode,
+            np.str_('rr'): EpiRRNode,
+            np.str_('rd'): EpiRDNode,
+            np.str_('t'): EpiTNode,
+            np.str_('mod'): EpiModNode,
+            np.str_('dd'): EpiDDNode,
+            np.str_('m78'): EpiM78Node
+            }
+
+    # iterate over the epi node types and create sklearn pipeline
+    for lo, epi in epis.items():
+        steps = []
+        # create the epi node
+        epi_node = epi(name=lo, snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos)
+        steps.append((lo, epi_node))
+
+        # add random forrest regressor
+        steps.append(('regressor', LinearRegression()))
+
+        # create the pipeline
+        skl_pipeline = SklearnPipeline(steps=steps)
+
+        # Fit the pipeline
+        skl_pipeline_fitted = skl_pipeline.fit(x_train, y_train)
+
+        # get score
+        r2 = skl_pipeline_fitted.score(x_val, y_val)
+
+        # check if this is the best lo
+        if r2 > best_res:
+            best_res = r2
+            best_epi = lo
+
+    return np.float32(best_res), np.str_(best_epi), snp1_name, snp2_name
+
+@ray.remote
+def ray_eval_pipeline(x_train,
+                      y_train,
+                      x_val,
+                      y_val,
+                      epi_nodes: epi_node_list_t,
+                      selector_node: ScikitNode,
+                      root_node: ScikitNode,
+                      pop_id: np.int16) -> Tuple[np.float32, np.uint16, np.int16]:
+    # create the pipeline
+    steps = []
+    # combine the epi nodes into a sklearn union
+    steps.append(('epi_union', FeatureUnion([(epi_node.name, epi_node) for epi_node in epi_nodes])))
+    # add the selector node
+    steps.append(('selector', selector_node))
+    # add the root node
+    steps.append(('root', root_node))
+
+    # transform internal pipeline representation into sklearn pipeline with PipelineBuilder class
+    pipeline = SklearnPipeline(steps=steps)
+
+    # attempt to fit the pipeline
+    # with warnings.catch_warnings(record=True) as w:
+    try:
+        pipeline_fitted = pipeline.fit(x_train, y_train)
+    except Exception as e:
+        # Catch any exceptions and print an error message
+        print(f"An error occurred while fitting the model: {e}")
+        return 0.0, 0
+
+    # get the r2 score
+    r2_score = pipeline_fitted.score(x_val, y_val)
+    # get the feature count that made it out of the selector node
+    feature_count = pipeline_fitted.named_steps['selector'].get_feature_count()
+
+    # return the pipeline
+    return np.float32(r2_score), np.uint16(feature_count), pop_id
 
 @typechecked # for debugging purposes
 class EA:
@@ -89,10 +177,20 @@ class EA:
         self.smt_in_out_p = smt_in_out_p
         self.smt_out_out_p = smt_out_out_p
         self.population = [] # will hold all the pipelines
+        self.repoduction = Reproduction(mut_prob=mut_prob,
+                                 cross_prob=cross_prob,
+                                 mut_selector_p=mut_selector_p,
+                                 mut_regressor_p=mut_regressor_p,
+                                 mut_ran_p=mut_ran_p,
+                                 mut_non_p=mut_non_p,
+                                 mut_smt_p=mut_smt_p,
+                                 smt_in_in_p=smt_in_in_p,
+                                 smt_in_out_p=smt_in_out_p,
+                                 smt_out_out_p=smt_out_out_p)
 
         # Initialize Ray: Will have to specify when running on hpc
         context = ray.init(num_cpus=cores, include_dashboard=True)
-        print('dashboard:', context.dashboard_url)
+        print()
 
     # data loader
     def data_loader(self, path: str, target_label: str = "y", split: float = 0.50) -> None:
@@ -184,16 +282,8 @@ class EA:
         # check for target
         try:
             if target is not None:
-                # X, y = check_X_y(features, target, accept_sparse=True, dtype=None)
-                # if self._imputed:
-                #     return X, y
-                # else:
                 return features, target
             else:
-                # X = check_array(features, accept_sparse=True, dtype=None)
-            #     if self._imputed:
-            #         return X
-            #     else:
                 return features
         except (AssertionError, ValueError):
             raise ValueError(
@@ -216,10 +306,7 @@ class EA:
         # initialize the hubs
         self.hubs = GenoHub(snps=self.snp_labels, bin_size=np.uint16(bin_size))
 
-
-    # Run NSGA-II for a specified number of generations
-    # All functions below are EA specific
-
+    # will evolve a population of pipelines for a specified number of generations
     def evolve(self, gens: int) -> None:
         """
         Function to evovle pipelines using the NSGA-II algorithm for a user specified number of generations.
@@ -230,19 +317,31 @@ class EA:
             Number of generations to run the algorithm.
 
         """
-
         # create the initial population
         self.initialize_population()
 
+        # print out the population for checks
+        # self.print_population()
 
+        # run the algorithm for the specified number of generations
+        for g in range(gens):
+            print('Generation:', g)
+
+            # evaluate all the pipelines
+            assert(len(self.population) == self.pop_size)
+            r2_complexity = self.evaluation(self.population)
+
+    # initialize the starting population
     def initialize_population(self) -> None:
         """
-        Function to initialize the population of pipelines.
-        We start by creating a random set of interactions and determine their best lo.
-        We then create a epi_node for each interaction and lo.
-        Once we have all epi_nodes, we create a pipeline with a random selector and regressor.
+        Function to initialize the population of pipelines with their set of epistatic interactions.
+        We start by creating a random set of interactions and set them within a pipeline.
+        Once we all pipelines have their initial set of interactions, we move on to finidng the best lo's.
         """
+        # will hold sets of interactions for each pipeline in the population
         pop_epi_interactions = []
+        # will hold the unseen interactions -- interactions not found in the Genohub
+        unseen_interactions = set()
 
         # create the initial population
         for _ in range(self.pop_size):
@@ -255,27 +354,176 @@ class EA:
             # set to make sure we don't have duplicates
             interactions = set()
 
-            # while we have not reached the max number of epi nodes
+            # while we have not reached the max number of epi interactions
             while len(interactions) < epi_cnt:
                 # get random snp1 and snp2 and add to interactions
-                interactions.add(self.hubs.get_ran_interaction(self.rng))
+                snp1, snp2 = self.hubs.get_ran_interaction(self.rng)
+                # add interaction to the set
+                interactions.add((snp1, snp2))
+
+                # check if we have seen this interaction before
+                if self.hubs.is_interaction_in_hub(snp1, snp2) == False:
+                    unseen_interactions.add((snp1, snp2))
 
             # add to the population
             pop_epi_interactions.append(interactions)
 
-        # find all unique interactions
-        # set() = {(snp1_name, snp2_name),...}
-        unique_interactions = set()
+        # make sure we have the correct number of interactions
+        assert len(pop_epi_interactions) == self.pop_size
+
+        # evaluate all unseen interactions
+        self.evaluate_unseen_interactions(unseen_interactions)
+
+        # remove bad interactions for each pipeline's set of interactions
         for interactions in pop_epi_interactions:
-            unique_interactions.update(interactions)
+            good_interactions = self.remove_bad_interactions(interactions)
 
+            # make sure we have the correct number of good interactions
+            assert len(good_interactions) <= len(interactions)
 
+            # create pipeline and add to the population
+            self.population.append(self.repoduction.generate_random_pipeline(self.rng, good_interactions))
+
+        # make sure we have the correct number of pipelines
+        assert len(self.population) == self.pop_size
+
+    # evaluate all unseed interactions and update the GenoHub
+    def evaluate_unseen_interactions(self, unseen_interactions: Set[Tuple]) -> None:
+        """
+        Function to evaluate all unseen interactions.
+        We will evaluate all unseen interactions and add them to the GenoHub.
+
+        Parameters:
+        unseen_interactions: Set[Tuple]
+            Set of unseen interactions to evaluate.
+        """
+        # collect all parallel jobs
+        ray_jobs = []
+
+        # collect all ray jobs for evaluation
+        for snp1_name, snp2_name in unseen_interactions:
+            ray_jobs.append(ray_lo_eval.remote(x_train = self.X_train_id,
+                                                y_train = self.y_train_id,
+                                                x_val = self.X_val_id,
+                                                y_val = self.y_val_id,
+                                                snp1_name = snp1_name,
+                                                snp2_name = snp2_name,
+                                                snp1_pos = self.hubs.get_snp_pos(snp1_name),
+                                                snp2_pos = self.hubs.get_snp_pos(snp2_name)))
+        # run all ray jobs
+        ray_results = ray.get(ray_jobs)
+
+        # make sure we have the correct number of results
+        assert len(ray_results) == len(unseen_interactions)
+
+        # add all results to the GenoHub
+        for r in ray_results:
+            r2, lo, snp1_name, snp2_name = r
+            self.hubs.update_epi_n_snp_hub(snp1_name, snp2_name, r2, lo)
+
+    # remove bad interactions for a given set of interactions
+    def remove_bad_interactions(self, interactions: Set[Tuple[snp_name_t,snp_name_t]]) -> Set[Tuple[snp_name_t,snp_name_t]]:
+        """
+        Function to remove bad interactions for a given set of interactions
+
+        Parameters:
+        interactions: List[Tuple[snp_name_t,snp_name_t]]
+            List of epistatic interactions represented by Tuples.
+        """
+        # iterate through each interaction
+        good_interactions = set()
+        for snp1_name, snp2_name in interactions:
+            # check if r2 is positive
+            if self.hubs.get_interaction_res(snp1_name, snp2_name) > 0:
+                # add to good interactions
+                good_interactions.add((snp1_name, snp2_name))
+
+        # return the good interactions
+        return good_interactions
+
+    # print the population
+    def print_population(self) -> None:
+        """
+        Function to print the population.
+        """
+        print('Population:')
+        for p in self.population:
+            p.print_pipeline()
+
+    # evaluate the population
+    def evaluation(self, pop: List[Pipeline]) -> List[Tuple[np.float32, np.uint16, np.int16]]:
+        # collect all parallel jobs
+        ray_jobs = []
+        # go through each pipeline in the population and evaluate
+        for i, pipeline in enumerate(pop):
+            # add ray job
+            ray_jobs.append(ray_eval_pipeline.remote(self.X_train_id,
+                                                     self.y_train_id,
+                                                     self.X_val_id,
+                                                     self.y_val_id,
+                                                     self.construct_epi_nodes(pipeline.get_epi_pairs()),
+                                                     pipeline.get_selector_node(),
+                                                     pipeline.get_root_node(),
+                                                     np.int16(i)))
+        # run all ray jobs
+        results = ray.get(ray_jobs)
+
+        # print postive results
+        print('results')
+        for res in results:
+            if res[0] > 0.0:
+                print(res)
+
+        return results
+
+    # construct epi_nodes for a pipeline's set of epi_pairs
+    def construct_epi_nodes(self, epi_pairs: Set[Tuple[snp_name_t,snp_name_t]]) -> epi_node_list_t:
+        """
+        Function to construct epi nodes for a pipeline's set of epi_pairs.
+
+        Parameters:
+        epi_pairs: Set[Tuple[snp_name_t,snp_name_t]]
+            Set of epistatic interactions represented by Tuples.
+        """
+        epi_nodes = []
+        id = 0
+        for snp1_name, snp2_name in epi_pairs:
+            # get the epi node
+            epi_lo = self.hubs.get_interaction_lo(snp1_name, snp2_name)
+            # get each snps position in the hub
+            snp1_pos = self.hubs.get_snp_pos(snp1_name)
+            snp2_pos = self.hubs.get_snp_pos(snp2_name)
+
+            if epi_lo == np.str_('cartesian'):
+                epi_nodes.append(EpiCartesianNode(name=f"EpiCartesianNode_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            elif epi_lo == np.str_('xor'):
+                epi_nodes.append(EpiXORNode(name=f"EpiXORNode_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            elif epi_lo == np.str_('rr'):
+                epi_nodes.append(EpiRRNode(name=f"EpiRRNode_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            elif epi_lo == np.str_('rd'):
+                epi_nodes.append(EpiRDNode(name=f"EpiRDNode_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            elif epi_lo == np.str_('t'):
+                epi_nodes.append(EpiTNode(name=f"EpiTNode_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            elif epi_lo == np.str_('mod'):
+                epi_nodes.append(EpiModNode(name=f"EpiModNode_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            elif epi_lo == np.str_('dd'):
+                epi_nodes.append(EpiDDNode(name=f"EpiDDNode_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            elif epi_lo == np.str_('m78'):
+                epi_nodes.append(EpiM78Node(name=f"EpiM78Node_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            elif epi_lo == np.str_('pager'):
+                epi_nodes.append(EpiPAGERNode(name=f"EpiPAGERNode_{id}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos))
+            else:
+                exit('Error: The interaction lo is not valid. Please provide a valid interaction lo.', -1)
+
+            id += 1
+        # return the list of epi nodes
+        return epi_nodes
 
 def main():
     # set experiemnt configurations
-    ea_config = {'seed': np.uint16(42),
-                 'pop_size': np.uint16(100),
-                 'epi_cnt_max': np.uint16(100),
+    ea_config = {'seed': np.uint16(0),
+                 'pop_size': np.uint16(20),
+                 'epi_cnt_max': np.uint16(300),
                  'cores': 10,
                  'mut_selector_p': np.float32(1.0),
                  'mut_regressor_p': np.float32(.5),
