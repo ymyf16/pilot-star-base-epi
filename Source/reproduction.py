@@ -63,13 +63,13 @@ class Reproduction:
                                     SequentialFeatureSelectorNode(rng=rng, seed=seed)
                                 ])
         root_node = rng.choice([LinearRegressionNode(rng=rng, seed=seed),
-                                # RandomForestRegressorNode(rng=rng, seed=seed),
+                                RandomForestRegressorNode(rng=rng, seed=seed),
                                 SGDRegressorNode(rng=rng, seed=seed),
-                                # DecisionTreeRegressorNode(rng=rng, seed=seed),
+                                DecisionTreeRegressorNode(rng=rng, seed=seed),
                                 ElasticNetNode(rng=rng, seed=seed),
                                 SVRNode(rng=rng, seed=seed),
-                                # GradientBoostingRegressorNode(rng=rng, seed=seed),
-                                # MLPRegressorNode(rng=rng, seed=seed)
+                                GradientBoostingRegressorNode(rng=rng, seed=seed),
+                                MLPRegressorNode(rng=rng, seed=seed)
                             ])
         # create the pipeline
         return Pipeline(selector_node=selector_node, root_node=root_node, epi_pairs=interactions, traits=[])

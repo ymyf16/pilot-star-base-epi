@@ -529,7 +529,7 @@ class EA:
 def main():
     # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
-                 'pop_size': np.uint16(300),
+                 'pop_size': np.uint16(50),
                  'epi_cnt_max': np.uint16(300),
                  'cores': 10,
                  'mut_selector_p': np.float32(1.0),

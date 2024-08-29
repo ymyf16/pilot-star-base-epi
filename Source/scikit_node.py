@@ -648,7 +648,7 @@ class DecisionTreeRegressorNode(ScikitNode, RegressorMixin):
 
         # if params is an empty dictionary, then we will initialize the params
         if params == {}:
-            self.params = {'criteria': rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson']),
+            self.params = {'criterion': rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson']),
                            'splitter': rng.choice(['best', 'random']),
                            'max_features': rng.choice([None, 'sqrt', 'log2']),
                            'max_depth': np.uint8(rng.integers(1,10)),
@@ -658,7 +658,7 @@ class DecisionTreeRegressorNode(ScikitNode, RegressorMixin):
 
         else:
             assert len(params) == 7
-            assert 'criteria' in params
+            assert 'criterion' in params
             assert 'splitter' in params
             assert 'max_features' in params
             assert 'max_depth' in params
@@ -720,8 +720,8 @@ class DecisionTreeRegressorNode(ScikitNode, RegressorMixin):
         else:
             self.params['min_samples_leaf'] = self.params['min_samples_leaf'] + min_samples_leaf_shift
 
-        # randomly pick criteria
-        self.params['criteria'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson'])
+        # randomly pick criterion
+        self.params['criterion'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson'])
         # randomly pick splitter
         self.params['splitter'] = rng.choice(['best', 'random'])
         # randomly pick max_features
@@ -743,7 +743,6 @@ class RandomForestRegressorNode(ScikitNode, RegressorMixin):
         if params == {}:
             self.params = {'n_estimators': np.int8(rng.integers(10,100)),
                            'criterion': rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson']),
-                           'splitter': rng.choice(['best', 'random']),
                            'max_depth': np.uint8(rng.integers(1,10)),
                            'max_features': rng.choice([None, 'sqrt', 'log2']),
                            'min_samples_split': np.uint8(rng.integers(1,20)),
@@ -827,10 +826,8 @@ class RandomForestRegressorNode(ScikitNode, RegressorMixin):
         else:
             self.params['min_samples_leaf'] = self.params['min_samples_leaf'] + min_samples_leaf_shift
 
-        # randomly pick criteria
-        self.params['criteria'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson'])
-        # randomly pick splitter
-        self.params['splitter'] = rng.choice(['best', 'random'])
+        # randomly pick criterion
+        self.params['criterion'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson'])
         # randomly pick max_features
         self.params['max_features'] = rng.choice([None, 'sqrt', 'log2'])
 
