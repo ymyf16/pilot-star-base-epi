@@ -2,20 +2,24 @@
 
 from sklearn.base import BaseEstimator
 from epi_nodes import EpiNode, EpiCartesianNode, EpiXORNode, EpiPAGERNode, EpiRRNode, EpiRDNode, EpiTNode, EpiModNode, EpiDDNode, EpiM78Node
-from typing import List, Dict
+from typing import List, Dict, Tuple, Set
 from scikit_nodes import ScikitNode, VarianceThresholdNode, SelectPercentileNode, SelectFweNode, SelectFromModelLasso, SelectFromModelTree, SequentialFeatureSelectorNode, LinearRegressionNode, RandomForestRegressorNode, SGDRegressorNode, DecisionTreeRegressorNode, ElasticNetNode, SVRNode, GradientBoostingRegressorNode, MLPRegressorNode
 import numpy as np
+from typeguard import typechecked
+import numpy.typing as npt
+from typing_extensions import Self
 
+@typechecked # for debugging purposes
 class Pipeline:
     def __init__(self,
-                 epi_pairs: List[tuple], 
+                 epi_pairs: Set[Tuple],
                  epi_branches: List[EpiNode], # each branch consists of one EpiNode
-                 selector_node: ScikitNode,
-                 root_node: ScikitNode, 
-                 traits: Dict[float, int], # r2 value and the no of features in the final regressor
-                 clone: bool = False,
-                 max_feature_count: int = 10):    
-        
+                 selector_node: ScikitNode | None,
+                 root_node: ScikitNode | None,
+                 traits: Dict[int, float],
+                 max_feature_count: np.uint16,
+                 clone: bool = False):
+
         self.epi_pairs = epi_pairs # will contain the interacting_features from each EpiNode/branch
         self.epi_branches = epi_branches # each branch consists of one EpiNode
         self.selector_node = selector_node
@@ -24,117 +28,133 @@ class Pipeline:
         self.clone = clone # true if no mutations applied to the pipeline
         self.max_feature_count = max_feature_count # maximum number of features/SNPs in the pipeline
 
+    def get_trait_r2(self) -> np.float32:
+        assert 'r2' in self.traits
+        return self.traits['r2']
+
+    def get_trait_feature_cnt(self) -> np.uint16:
+        assert 'feature_cnt' in self.traits
+        return self.traits['feature_cnt']
+
+    def set_traits(self, traits: Dict[int, float]) -> None:
+        # check that internal traits is empty
+        assert len(self.traits) == 0
+        # make sure that the traits are not empty
+        assert len(traits) == 2
+        # make sure that the traits are a dictionary
+        assert 'r2' in traits and 'feature_cnt' in traits
+
+        # update the traits
+        self.traits.update(traits)
+        return
+
     # method to get the number of nodes in the pipeline
     def get_branch_count(self):
-        return len(self.epi_branches) 
-    
+        return len(self.epi_branches)
+
     # method to get the number of features/SNPs in the pipeline
     def get_feature_count(self):
         return self.selector_node.get_feature_count()
-    
 
     # method to get the selector node
     def get_selector_node(self):
         return self.selector_node
-    
+
     # method to get the root node
-    def get_root_node(self):
+    def get_root_nood(self):
         return self.root_node
-    
-    # predict method
-    def predict(self, X):
-        # todo: implement the predict method
-        pass
 
-    def generate_random_pipeline(self, rng, header_list): # pass upper bound no of epi nodes.
-        # generate a random pipeline
-        # 1. Define lists of possible selector and regressor nodes
-        print("Random Seed: ", rng)
-        selector_nodes = [
-            VarianceThresholdNode(rng=rng),
-            SelectPercentileNode(rng=rng),
-            SelectFweNode(rng=rng),
-            SelectFromModelLasso(rng=rng),
-            SelectFromModelTree(rng=rng),
-            SequentialFeatureSelectorNode(rng=rng)
-        ]
-    
-        regressor_nodes = [
-        LinearRegressionNode(rng=rng),
-        RandomForestRegressorNode(rng=rng),
-        SGDRegressorNode(rng=rng),
-        DecisionTreeRegressorNode(rng=rng),
-        ElasticNetNode(rng=rng),
-        SVRNode(rng=rng),
-        GradientBoostingRegressorNode(rng=rng),
-        MLPRegressorNode(rng=rng)
-        ]
-    
-        # 2. Randomly select a selector node
-        selector_node = rng.choice(selector_nodes)
-    
-        # 3. Randomly select a regressor node
-        root_node = rng.choice(regressor_nodes)
-    
-        # 4. Generate multiple EpiNodes
-        epi_nodes = [
-            EpiCartesianNode(name="EpiCartesianNode", rng=rng, header_list=header_list),
-            EpiXORNode(name="EpiXORNode", rng=rng, header_list=header_list),
-            EpiRRNode(name="EpiRRNode", rng=rng, header_list=header_list),
-            EpiRDNode(name="EpiRDNode", rng=rng, header_list=header_list),
-            EpiTNode(name="EpiTNode", rng=rng, header_list=header_list),
-            EpiModNode(name="EpiModNode", rng=rng, header_list=header_list),
-            EpiDDNode(name="EpiDDNode", rng=rng, header_list=header_list),
-            EpiM78Node(name="EpiM78Node", rng=rng, header_list=header_list),
-            EpiPAGERNode(name="EpiPAGERNode", rng=rng, header_list=header_list)
-        ]
-    
-        # Generate EpiNodes with random interacting pairs (numpy array indexes)
-        num_epi_nodes = rng.integers(2, self.max_feature_count)  # Randomly select how many EpiNodes to create - upper bound to be provided by user.
+    # generate a random pipeline
+    def generate_random_pipeline(self, rng, header_list: npt.NDArray[np.str_]) -> Self:
+        print("Starting to generate a random pipeline.")
+        # randomly select a selector node
+        selector_node = rng.choice([VarianceThresholdNode(rng=rng),
+                                    SelectPercentileNode(rng=rng),
+                                    SelectFweNode(rng=rng),
+                                    SelectFromModelLasso(rng=rng),
+                                    SelectFromModelTree(rng=rng),
+                                    SequentialFeatureSelectorNode(rng=rng)
+                                ])
+
+        # randomly select a regressor node
+        root_node = rng.choice([LinearRegressionNode(rng=rng),
+                                RandomForestRegressorNode(rng=rng),
+                                SGDRegressorNode(rng=rng),
+                                DecisionTreeRegressorNode(rng=rng),
+                                ElasticNetNode(rng=rng),
+                                SVRNode(rng=rng),
+                                GradientBoostingRegressorNode(rng=rng),
+                                MLPRegressorNode(rng=rng)
+                            ])
+
+        # randomly select how many EpiNodes to create - upper bound to be provided by user.
+        num_epi_nodes = rng.integers(2, self.max_feature_count)
+        # list is okay bc we just need to traverse
         epi_branches = []
-        epi_pairs = []
-        unique_epi_pairs = set()
-        for _ in range(num_epi_nodes):
-            selected_epi_node_class = rng.choice(epi_nodes)
-            #num_snps = 2  # for 2-way interactions
-            #interacting_features = [rng.randint(0, 1000, size=num_snps)]  # Random numpy array indexes
-            epi_node_instance = selected_epi_node_class.__class__(name=f"{selected_epi_node_class.__class__.__name__}_{_}", rng=rng, header_list = header_list) 
-            
-            epi_branches.append(epi_node_instance)
-            
-            # epi_pairs.append((epi_node_instance.snp1_name, epi_node_instance.snp2_name))
+        # changed to set to have fast lookups
+        epi_pairs = set()
 
-        # while len(epi_branches) < num_epi_nodes:
-        #     # Select a random epi node class and instantiate it
-        #     selected_epi_node_class = rng.choice(epi_nodes)
-        #     epi_node_instance = selected_epi_node_class.__class__(name=f"{selected_epi_node_class.__class__.__name__}_{len(epi_branches)}",
-        #                                                       rng=rng, header_list=header_list)
+        # Generate EpiNodes with random interacting pairs (numpy array indexes)
+        while len(epi_branches) <= num_epi_nodes:
+            # make sure both branches and pairs are the same length
+            assert len(epi_branches) == len(epi_pairs)
 
-        #     # Ensure that this epi node's SNP pair is unique
-        #     snp_pair = (epi_node_instance.snp1_name, epi_node_instance.snp2_name)
-        #     if snp_pair in unique_epi_pairs or snp_pair[::-1] in unique_epi_pairs:
-        #         # Duplicate found, skip this node
-        #         continue
+            # select two snps randomly from the header_list
+            snp1_name, snp2_name = rng.choice(header_list, size=2, replace=False)
 
-        #     # Add unique pair and instance to lists
-        #     unique_epi_pairs.add(snp_pair)
-        #     epi_branches.append(epi_node_instance)
+            # make sure snp1 < snp2 or else swap
+            if snp1_name > snp2_name:
+                snp1_name, snp2_name = snp2_name, snp1_name
 
-        # Create the pipeline using the generated nodes
-        pipeline = Pipeline(epi_pairs=epi_pairs,
-                            epi_branches=epi_branches, # probably should pass set(epi_branches)
-                            selector_node=selector_node,
-                            root_node=root_node,
-                            traits={})
-        print("Branches in the pipeline:", epi_branches)
+            # make sure the pair is not already in the epi_pairs
+            if (snp1_name, snp2_name) in epi_pairs:
+                continue
+
+            # find the index of the selected snps
+            snp1_index = np.uint32(np.where(header_list == snp1_name)[0][0])
+            assert snp1_name == header_list[snp1_index]
+            snp2_index = np.uint32(np.where(header_list == snp2_name)[0][0])
+            assert snp2_name == header_list[snp2_index]
+
+            # randomly select an EpiNode class
+            epi_node_class = rng.choice([EpiCartesianNode(name=f"EpiCartesianNode_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                        EpiXORNode(name=f"EpiXORNode_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                        EpiRRNode(name=f"EpiRRNode_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                        EpiRDNode(name=f"EpiRDNode_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                        EpiTNode(name=f"EpiTNode_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                        EpiModNode(name=f"EpiModNode_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                        EpiDDNode(name=f"EpiDDNode_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                        EpiM78Node(name=f"EpiM78Node_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                        EpiPAGERNode(name=f"EpiPAGERNode_{len(epi_branches)}", snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_index, snp2_pos=snp2_index),
+                                    ])
+            epi_branches.append(epi_node_class)
+            epi_pairs.add((epi_node_class.get_snp1_name(), epi_node_class.get_snp2_name()))
 
         # Create and return the pipeline
-        return pipeline
+        return Pipeline(epi_pairs=epi_pairs,
+                            epi_branches=epi_branches,
+                            selector_node=selector_node,
+                            root_node=root_node,
+                            max_feature_count=self.max_feature_count,
+                            clone=False,
+                            traits={})
 
+    # print the pipeline
+    def print_pipeline(self) -> None:
+        print("Pipeline:")
+        print("EpiNodes:")
+        print('len(self.epi_branches):', len(self.epi_branches))
+        for epi_node in self.epi_branches:
+            print(epi_node)
+        print("Selector Node:")
+        print(self.selector_node)
+        print("Root Node:")
+        print(self.root_node)
+        return
 
     def mutate_pair_snpwise(self, rng):
         # mutate a pair of nodes
-        pass    
+        pass
 
     def mutate_selector_node(self, rng):
         # mutate the selector node
@@ -142,18 +162,4 @@ class Pipeline:
 
     def mutate_root_node(self, rng):
         # mutate the root node
-        pass    
-
-
-    # def AddRandomSelectorNode(self, rng):
-    #     classs = rng.choice([SELEC, RandomForestClassifier, LinearRegression])
-    #     self.selector_node = classs(rng)
-
- 
-# # create a default pipeline
-# pipeline = Pipeline(epi_pairs=[], epi_branches=[], selector_node=None, root_node=None, traits={}, clone=False, max_feature_count=10)
-# pipeline = pipeline.generate_random_pipeline(np.random.default_rng(0))
-# print(pipeline.get_branch_count())
-# #print(pipeline.get_feature_count())
-# print(pipeline.get_selector_node())
-# print(pipeline.get_root_nood())
+        pass

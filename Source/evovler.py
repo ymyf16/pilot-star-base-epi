@@ -8,34 +8,70 @@
 #####################################################################################################
 
 import numpy as np
-from pipeline_builder import PipelineBuilder
+from sklearn.ensemble import RandomForestRegressor
 from typeguard import typechecked
 from typing import List
 import numpy.typing as npt
+from sklearn.pipeline import Pipeline as SklearnPipeline
 import copy as cp
 import pandas as pd
 import sys, os
 import ray
 from pipeline import Pipeline
 import nsga_toolbox as nsga
-from sklearn.utils import check_X_y, check_array, check_consistent_length
+# from sklearn.utils import check_X_y, check_array
 from sklearn.model_selection import train_test_split
 import time
 from geno_hub import GenoHub
+from pipeline_builder import PipelineBuilder
+from typing import List, Tuple
+from epi_nodes import EpiNode, EpiCartesianNode, EpiXORNode, EpiPAGERNode, EpiRRNode, EpiRDNode, EpiTNode, EpiModNode, EpiDDNode, EpiM78Node
+
 
 @ray.remote
-def ray_eval(x_train, y_train, x_val, y_val, pipeline):
+def ray_eval(x_train, y_train, x_val, y_val, pipeline) -> Tuple[np.float32, np.uint16]:
+    assert isinstance(pipeline, Pipeline)
 
-    pipeline_builder = PipelineBuilder(pipeline) # create an object of the pipeline builder by passing the pipeline
-    # fit the pipeline
+    # if pipeline is a clone return the traits
+    if pipeline.clone:
+        return pipeline.traits['r2'], pipeline.traits['feature_cnt']
+
+    # transform internal pipeline representation into sklearn pipeline with PipelineBuilder class
+    pipeline_builder = PipelineBuilder(pipeline)
+
+    # fit the sklearn pipeline
+    try:
+        skl_pipeline_fitted = pipeline_builder.fit(x_train, y_train)
+    except Exception as e:
+        # Catch any exceptions and print an error message
+        print(f"An error occurred while fitting the model: {e}")
+        return 0.0, 0
+
+    # get the traits
+    score, feature_count = pipeline_builder.score(x_val, y_val) # validation traits
+
+    # return the pipeline
+    return np.float32(score), np.uint16(feature_count)
+
+# for debugging in serial
+def eval(x_train, y_train, x_val, y_val, pipeline) -> Tuple[np.float32, np.uint16]:
+    assert isinstance(pipeline, Pipeline)
+
+    # if pipeline is a clone return the traits
+    if pipeline.clone:
+        return pipeline.traits['r2'], pipeline.traits['feature_cnt']
+
+    # transform internal pipeline representation into sklearn pipeline with PipelineBuilder class
+    pipeline_builder = PipelineBuilder(pipeline)
+
+    # fit the sklearn pipeline
     skl_pipeline_fitted = pipeline_builder.fit(x_train, y_train)
 
     # get the traits
     score, feature_count = pipeline_builder.score(x_val, y_val) # validation traits
 
-
     # return the pipeline
-    return score, feature_count
+    return np.float32(score), np.uint16(feature_count)
 
 @typechecked # for debugging purposes
 class EA:
@@ -52,6 +88,8 @@ class EA:
             Population size.
         epi_cnt_max: np.uint16
             Maximum number of epistatic interactions (nodes).
+        cores: int
+            Number of cores to use for parallel processing.
         mut_ran_p: np.float32
             Probability for random mutation.
         mut_smt_p: np.float32
@@ -77,6 +115,7 @@ class EA:
         self.smt_in_in_p = smt_in_in_p
         self.smt_in_out_p = smt_in_out_p
         self.smt_out_out_p = smt_out_out_p
+        self.population = [] # will hold all the pipelines
 
         # Initialize Ray: Will have to specify when running on hpc
         context = ray.init(num_cpus=cores, include_dashboard=True)
@@ -99,8 +138,6 @@ class EA:
 
         print('Loading data...')
 
-        # save target variable
-        self.target_label = target_label
 
         # check if the path is valid
         if os.path.isfile(path) == False:
@@ -108,7 +145,8 @@ class EA:
             exit('Error: The path provided is not valid. Please provide a valid path to the data file.', -1)
 
         # get pandas dataframe snp names without loading all data
-        self.snp_labels = pd.read_csv(path, nrows=0, index_col=0).columns.tolist()
+        # self.snp_labels = (pd.read_csv(path, nrows=0, index_col=0).columns.tolist())
+        self.snp_labels = (pd.read_csv(path, nrows=0).columns.tolist()) # removed index_col=0 so that the first column is not used as index
 
         # check if the target label is valid
         if target_label not in self.snp_labels:
@@ -116,6 +154,12 @@ class EA:
 
         # remove target label from snp labels
         self.snp_labels.remove(target_label)
+
+        # convert python strings into numpy strings
+        self.snp_labels = np.array(self.snp_labels, dtype=np.str_)
+        print('snp_labels:', self.snp_labels)
+        self.target_label = np.str_(target_label)
+        print('target_label:', self.target_label)
 
         # load the data
         all_x = pd.read_csv(filepath_or_buffer=path, usecols=self.snp_labels)
@@ -131,8 +175,8 @@ class EA:
         self.X_train, self.X_val, self.y_train, self.y_val = train_test_split(all_x, all_y, test_size=split, random_state=self.seed)
 
         # check if the data was partitioned correctly
-        self.X_train, self.y_train = self.CheckDataset(self.X_train, self.y_train)
-        self.X_val, self.y_val = self.CheckDataset(self.X_val, self.y_val)
+        self.X_train, self.y_train = self.check_dataset(self.X_train, self.y_train)
+        self.X_val, self.y_val = self.check_dataset(self.X_val, self.y_val)
 
         # load data into ray object store
         self.X_train_id = ray.put(self.X_train)
@@ -170,13 +214,13 @@ class EA:
         # check for target
         try:
             if target is not None:
-                X, y = check_X_y(features, target, accept_sparse=True, dtype=None)
+                # X, y = check_X_y(features, target, accept_sparse=True, dtype=None)
                 # if self._imputed:
                 #     return X, y
                 # else:
                 return features, target
             else:
-                X = check_array(features, accept_sparse=True, dtype=None)
+                # X = check_array(features, accept_sparse=True, dtype=None)
             #     if self._imputed:
             #         return X
             #     else:
@@ -206,7 +250,7 @@ class EA:
     # Run NSGA-II for a specified number of generations
     # All functions below are EA specific
 
-    def evolve(self, gens: np.uint16) -> None:
+    def evolve(self, gens: int) -> None:
         """
         Function to evovle pipelines using the NSGA-II algorithm for a user specified number of generations.
         We also take in the training and validation data to evaluate the pipelines.
@@ -220,36 +264,58 @@ class EA:
         # create the initial population
         self.initialize_population()
 
-        # for each generation
-        for gen in range(gens):
+        # for gen in range(gens):
 
-            # evaluate the initial population
-            # transform pipeline into scikit learn pipeline
-            pop_obj_scores = self.evaluation(self.population)
+        #     print('generation:', gen)
+
+        #     # evaluate the population
+        #     pop_obj_scores = self.evaluation(self.population)
 
 
-            # select parent pipelines
-            # parents = self.parent_selection(pop_obj_scores)
+        #     # select parent pipelines
+        #     # parents = self.parent_selection(pop_obj_scores)
 
-            # create offspring pipelines
-            # offspring = self.reproduction(parents)
+        #     # create offspring pipelines
+        #     # offspring = self.reproduction(parents)
 
-            # evaluate the offspring
-            # off_obj_scores = self.evaluation(offspring)
+        #     # evaluate the offspring
+        #     # off_obj_scores = self.evaluation(offspring)
 
-            # select surviving pipelines
-            # TODO: make sure that the np,concatenate is correctly stacking the scores
-            # self.survivial_selection(np.concatenate((pop_obj_scores, off_obj_scores), axis=None))
+        #     # select surviving pipelines
+        #     # TODO: make sure that the np,concatenate is correctly stacking the scores
+        #     # self.survivial_selection(np.concatenate((pop_obj_scores, off_obj_scores), axis=None))
 
     def initialize_population(self):
-        pass
+        # create the initial population
+        for _ in range(self.pop_size):
+            # create a pipeline
+            pipeline = Pipeline(epi_pairs=set(), epi_branches=[], selector_node=None, root_node=None, traits={}, \
+                clone=False, max_feature_count=self.epi_cnt_max).generate_random_pipeline(self.rng, self.snp_labels)
+            print("A pipeline has been created.")
+
+            # print('#'*100)
+            # pipeline.print_pipeline()
+            # print('#'*100)
+            pipeline.print_pipeline()
+
+            self.population.append(pipeline)
+
+        # make sure that all pipelines are of type Pipeline
+        assert all(isinstance(x, Pipeline) for x in self.population)
 
     def evaluation(self, pop: List[Pipeline]) -> npt.NDArray[np.float32]:
-        # convert to sklearn pipeline
-        # send to ray for eval
-        # get back scores and set them in pipeline (traits)
-        # return scores [(r2, complexity),....]
-        pass
+        # create a list of futures for each pipeline in the population to be evaluated
+        futures = [ray_eval.remote(self.X_train_id, self.y_train_id, self.X_val_id, self.y_val_id, pipeline) for pipeline in pop]
+        results = ray.get(futures)
+
+        # results = [eval(self.X_train, self.y_train, self.X_val, self.y_val, pipeline) for pipeline in pop] # for debugging in serial
+
+        print('results')
+        for res in results:
+            print(res)
+
+
+        return np.asarray([0.0], dtype=np.float32)
 
     def parent_selection(self, pop_scores: npt.NDArray[np.float32]) -> List[Pipeline]:
         pass
@@ -261,11 +327,57 @@ class EA:
         pass
 
 
-def main():
+    @ray.remote
+    def ray_lo_eval(x_train, y_train, x_val, y_val, snp1_name: np.str_, snp2_name: np.str_, snp1_pos: np.uint32, snp2_pos: np.uint32) -> Tuple[np.float32, np.str_]:
+        # hold results
+        best_epi = ''
+        best_res = -1.0
 
+        # holds all lo's we are going to evaluate
+        epis = {np.str_('cartesian'): EpiCartesianNode,
+            np.str_('xor'): EpiXORNode,
+            np.str_('pager'): EpiPAGERNode,
+            np.str_('rr'): EpiRRNode,
+            np.str_('rd'): EpiRDNode,
+            np.str_('t'): EpiTNode,
+            np.str_('mod'): EpiModNode,
+            np.str_('dd'): EpiDDNode,
+            np.str_('m78'): EpiM78Node
+            }
+
+        # iterate over the epi node types and create sklearn pipeline
+        for lo, epi in epis:
+            steps = []
+            # create the epi node
+            epi_node = epi(name=lo, snp1_name=snp1_name, snp2_name=snp2_name, snp1_pos=snp1_pos, snp2_pos=snp2_pos)
+            steps.append((lo, epi_node))
+
+            # add random forrest regressor
+            # TODO: Should we have this random_state always set to 0? or should we pass the seed?
+            steps.append(('regressor', RandomForestRegressor(n_estimators=100, random_state=0)))
+
+            # create the pipeline
+            skl_pipeline = SklearnPipeline(steps=steps)
+
+            # Fit the pipeline
+            skl_pipeline_fitted = skl_pipeline.fit(x_train, y_train)
+
+            # get score
+            r2 = skl_pipeline_fitted.score(x_val, y_val)
+
+            # check if this is the best lo
+            if r2 > best_res:
+                best_res = r2
+                best_epi = lo
+
+        return np.float32(best_res), np.str_(best_epi)
+
+
+def main():
+    # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
                  'pop_size': np.uint16(100),
-                 'epi_cnt_max': np.uint16(100),
+                 'epi_cnt_max': np.uint16(250),
                  'cores': 10,
                  'mut_ran_p':np.float32(.45),
                  'mut_smt_p': np.float32(.45),
@@ -275,13 +387,14 @@ def main():
                  'smt_out_out_p': np.float32(.45)}
 
     ea = EA(**ea_config)
-    ea.data_loader('/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/pruned_ratdata_bmitail_onSNPnum.csv')
-    ea.initialize_hubs(10)
-    # time.sleep(20)
+    # need to update the path to the data file
+    data_dir = '/Users/ghosha/Library/CloudStorage/OneDrive-Cedars-SinaiHealthSystem/StarBASE-GP/Benchmarking/18qtl_pruned_BMIres.csv'
+    ea.data_loader(data_dir)
+    ea.initialize_hubs(100)
+
+    ea.evolve(1)
 
     ray.shutdown()
-
-
 
 if __name__ == "__main__":
     main()

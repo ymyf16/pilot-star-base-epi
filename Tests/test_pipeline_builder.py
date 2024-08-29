@@ -15,6 +15,7 @@ X = X.to_numpy()
 y = y.to_numpy()
 
 print(np.array(data.columns[:-1]))
+print(type(np.array(data.columns[:-1])))
 
 # Create a random pipeline
 pipeline = Pipeline(epi_pairs=[], epi_branches=[], selector_node=None, root_node=None, traits={}, max_feature_count=len(X)/10).generate_random_pipeline(rng = np.random.default_rng(42), header_list=np.array(data.columns[:-1]))

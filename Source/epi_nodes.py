@@ -7,15 +7,16 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import MinMaxScaler
 
 class EpiNode(BaseEstimator, TransformerMixin, ABC):
-    def __init__(self, name, rng, header_list): # take in the header of the data and randomly select two columns 
+    def __init__(self, name: np.str_, snp1_name: np.str_, snp2_name: np.str_, snp1_pos: np.uint32, snp2_pos: np.uint32):
         self.name = name
-        self.rng = rng
-        self.header_list = header_list
-        self.snp1_name = None
-        self.snp2_name = None
+        self.snp1_name = snp1_name
+        self.snp2_name = snp2_name
+        self.snp1_pos = snp1_pos
+        self.snp2_pos = snp2_pos
+
         self.epi_feature = None # store the output of process_data, the actual epistatic feature
-        self.logical_operator = None
-        self.mapping = None 
+        # self.logical_operator = None
+        self.mapping = None
         self.epi_feature_name = None
         self.fit_flag = False
     
@@ -23,13 +24,24 @@ class EpiNode(BaseEstimator, TransformerMixin, ABC):
     def fit(self, X, y=None):
         pass
 
+    def print_epi_feature(self):    
+        print(self.epi_feature)
+
     def transform(self, X):
-        # The output of process_data should be stored in self.epi_feature
-        return self.epi_feature.reshape(-1, 1)  # Ensure the output is 2D for scikit-learn compatibility
+        pass
+
+    def get_interaction(self) -> np.str_:
+        return np.str_(f"{self.get_snp1_name}_{self.get_lo}_{self.get_snp2_name}")
 
     @abstractmethod
-    def get_feature_names_out(self): # to get the name of the epistatic feature
+    def get_lo(self) -> np.str_:
         pass
+
+    def get_snp1_name(self) -> np.str_:
+        return self.snp1_name
+
+    def get_snp2_name(self) -> np.str_:
+        return self.snp2_name
 
     @abstractmethod
     def predict(self, X):
@@ -37,346 +49,515 @@ class EpiNode(BaseEstimator, TransformerMixin, ABC):
 
 class EpiCartesianNode(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # Get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
         
+        # Cartesian product for training data
         epi_feature = np.multiply(snp1, snp2)
+        
+        # Normalize the feature
         epi_feature = (epi_feature - np.min(epi_feature)) / (np.max(epi_feature) - np.min(epi_feature))
-        self.epi_feature = epi_feature.astype(np.float32)
-        self.logical_operator = "CART"
+        
+        # Store the result in self.epi_feature for training data
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
+        
+        # Mark the node as fitted
         self.fit_flag = True
         
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        # Always recompute the epistatic feature, regardless of train or validation data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        # Cartesian product for the given data (train or validation)
+        epi_feature = np.multiply(snp1, snp2)
+        
+        # Normalize the feature
+        epi_feature = (epi_feature - np.min(epi_feature)) / (np.max(epi_feature) - np.min(epi_feature))
+        
+        # Return the computed feature for this dataset
+        return np.array(epi_feature.astype(np.float32), dtype=np.float32).reshape(-1, 1)
 
     def predict(self, X):
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # does the same operation as fit but with the test data
+        if self.fit_flag == False:
+            raise ValueError("Model not fitted yet. Please fit the model first")
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # Cartesian product
         epi_feature = np.multiply(snp1, snp2)
+        # normalize the feature
         epi_feature = (epi_feature - np.min(epi_feature)) / (np.max(epi_feature) - np.min(epi_feature))
-        return epi_feature.astype(np.float32)
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_CART_{self.snp2_name}"
-        return self.epi_feature_name
+        return self.epi_feature.reshape(-1, 1)
+
+    def get_lo(self) -> np.str_:
+        return np.str_("cartesian")
     
 
 class EpiXORNode(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
-
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # XOR operation
         epi_feature = (snp1 % 2 + snp2 % 2) % 2
-        self.epi_feature = epi_feature.astype(np.float32)
-        self.logical_operator = "XOR"
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
+        # we have fitted this node
         self.fit_flag = True
 
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        # Always recompute the epistatic feature, regardless of train or validation data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        # XOR operation for the given data (train or validation)
+        epi_feature = (snp1 % 2 + snp2 % 2) % 2
+        
+        # Return the computed feature for this dataset
+        return np.array(epi_feature.astype(np.float32), dtype=np.float32).reshape(-1, 1)
 
 
     def predict(self, X):
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # does the same operation as fit but with the test data
+        if self.fit_flag == False:
+            raise ValueError("Model not fitted yet. Please fit the model first")
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+             snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # XOR operation
         epi_feature = (snp1 % 2 + snp2 % 2) % 2
-        return epi_feature.astype(np.float32)
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_XOR_{self.snp2_name}"
-        return self.epi_feature_name
+        return self.epi_feature.reshape(-1, 1)
+
+    def get_lo(self) -> np.str_:
+        return np.str_("xor")
     
 
 class EpiRRNode(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
-
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # RR operation
         epi_feature = np.where((snp1 == 2) & (snp2 == 2), 1, 0)
+        # cast to np.float32
         self.epi_feature = epi_feature.astype(np.float32)
-        self.logical_operator = "RR"
         self.fit_flag = True
 
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        # Always recompute the epistatic feature, regardless of train or validation data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        # RR operation for the given data (train or validation)
+        epi_feature = np.where((snp1 == 2) & (snp2 == 2), 1, 0)
+        
+        # Return the computed feature for this dataset
+        return np.array(epi_feature.astype(np.float32), dtype=np.float32).reshape(-1, 1)
 
 
     def predict(self, X):
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # does the same operation as fit but with the test data
+        if self.fit_flag == False:
+            raise ValueError("Model not fitted yet. Please fit the model first")
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # RR operation
         epi_feature = np.where((snp1 == 2) & (snp2 == 2), 1, 0)
-        return epi_feature.astype(np.float32)
+        # cast to np.float32
+        self.epi_feature = epi_feature.astype(np.float32)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_RR_{self.snp2_name}"
-        return self.epi_feature_name
+        return self.epi_feature.reshape(-1, 1)
+
+    def get_lo(self) -> np.str_:
+        return np.str_("rr")
     
 
 class EpiRDNode(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
-
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # RD operation
         epi_feature = np.where(((snp1 == 2) & (snp2 == 1)) | ((snp1 == 2) & (snp2 == 2)), 1, 0)
+        # cast to np.float32
         self.epi_feature = epi_feature.astype(np.float32)
-        self.logical_operator = "RD"
+        # we have fitted this node
         self.fit_flag = True
 
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        # Always recompute the epistatic feature, regardless of train or validation data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        # RD operation for the given data (train or validation)
+        epi_feature = np.where(((snp1 == 2) & (snp2 == 1)) | ((snp1 == 2) & (snp2 == 2)), 1, 0)
+        
+        # Return the computed feature for this dataset
+        return np.array(epi_feature.astype(np.float32), dtype=np.float32).reshape(-1, 1)
 
 
     def predict(self, X):
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # does the same operation as fit but with the test data
+        if self.fit_flag == False:
+            raise ValueError("Model not fitted yet. Please fit the model first")
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # RD operation
         epi_feature = np.where(((snp1 == 2) & (snp2 == 1)) | ((snp1 == 2) & (snp2 == 2)), 1, 0)
-        return epi_feature.astype(np.float32)
+        # cast to np.float32
+        self.epi_feature = epi_feature.astype(np.float32)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_RD_{self.snp2_name}"
-        return self.epi_feature_name
-    
+        return self.epi_feature.reshape(-1, 1)
+
+    def get_lo(self) -> np.str_:
+        return np.str_("rd")
 
 class EpiTNode(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
-
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # T operation
         epi_feature = np.where(((snp1 == 2) & (snp2 == 1)) | ((snp1 == 2) & (snp2 == 2)) | ((snp1 == 1) & (snp2 == 2)), 1, 0)
+        # cast to np.float32
         self.epi_feature = epi_feature.astype(np.float32)
-        self.logical_operator = "T"
+        # we have fitted this node
         self.fit_flag = True
 
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        # Always recompute the epistatic feature, regardless of train or validation data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        # T operation for the given data (train or validation)
+        epi_feature = np.where(((snp1 == 2) & (snp2 == 1)) | ((snp1 == 2) & (snp2 == 2)) | ((snp1 == 1) & (snp2 == 2)), 1, 0)
+        
+        # Return the computed feature for this dataset
+        return np.array(epi_feature.astype(np.float32), dtype=np.float32).reshape(-1, 1)
 
 
     def predict(self, X):
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # does the same operation as fit but with the test data
+        if self.fit_flag == False:
+            raise ValueError("Model not fitted yet. Please fit the model first")
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # T operation
         epi_feature = np.where(((snp1 == 2) & (snp2 == 1)) | ((snp1 == 2) & (snp2 == 2)) | ((snp1 == 1) & (snp2 == 2)), 1, 0)
-        return epi_feature.astype(np.float32)
+        # cast to np.float32
+        self.epi_feature = epi_feature.astype(np.float32)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_T_{self.snp2_name}"
-        return self.epi_feature_name
+        return self.epi_feature.reshape(-1, 1)
+
+    def get_lo(self) -> np.str_:
+        return np.str_("t")
     
 
 class EpiModNode(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
-
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # Mod operation
         epi_feature = np.isin(snp1, [2]) & np.isin(snp2, [0, 1, 2]) | ((snp1 == 1) & (snp2 == 2))
-        self.epi_feature = epi_feature.astype(np.float32)
-        self.logical_operator = "MOD"
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
+        # we have fitted this node
         self.fit_flag = True
 
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        # Always recompute the epistatic feature, regardless of train or validation data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        # Mod operation for the given data (train or validation)
+        epi_feature = np.isin(snp1, [2]) & np.isin(snp2, [0, 1, 2]) | ((snp1 == 1) & (snp2 == 2))
+        
+        # Return the computed feature for this dataset
+        return np.array(epi_feature.astype(np.float32), dtype=np.float32).reshape(-1, 1)
 
 
     def predict(self, X):
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # does the same operation as fit but with the test data
+        if self.fit_flag == False:
+            raise ValueError("Model not fitted yet. Please fit the model first")
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # Mod operation
         epi_feature = np.isin(snp1, [2]) & np.isin(snp2, [0, 1, 2]) | ((snp1 == 1) & (snp2 == 2))
-        return epi_feature.astype(np.float32)
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
+     
+        return self.epi_feature.reshape(-1, 1)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_MOD_{self.snp2_name}"
-        return self.epi_feature_name
+    def get_lo(self) -> np.str_:
+        return np.str_("mod")
     
 
 class EpiDDNode(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
-
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # DD operation
         condition1 = np.isin(snp1, [1, 2]) & (snp2 == 1)
         condition2 = (snp1 == 1) & np.isin(snp2, [1, 2])
         condition3 = (snp1 == 2) & (snp2 == 2)
         epi_feature = condition1 | condition2 | condition3
-        self.epi_feature = epi_feature.astype(np.float32)
-        self.logical_operator = "DD"
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
+        # we have fitted this node
         self.fit_flag = True
 
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        # Always recompute the epistatic feature, regardless of train or validation data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        # DD operation for the given data (train or validation)
+        condition1 = np.isin(snp1, [1, 2]) & (snp2 == 1)
+        condition2 = (snp1 == 1) & np.isin(snp2, [1, 2])
+        condition3 = (snp1 == 2) & (snp2 == 2)
+        epi_feature = condition1 | condition2 | condition3
+        
+        # Return the computed feature for this dataset
+        return np.array(epi_feature.astype(np.float32), dtype=np.float32).reshape(-1, 1)
 
 
     def predict(self, X):
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # does the same operation as fit but with the test data
+        if self.fit_flag == False:
+            raise ValueError("Model not fitted yet. Please fit the model first")
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # DD operation
         condition1 = np.isin(snp1, [1, 2]) & (snp2 == 1)
         condition2 = (snp1 == 1) & np.isin(snp2, [1, 2])
         condition3 = (snp1 == 2) & (snp2 == 2)
         epi_feature = condition1 | condition2 | condition3
-        return epi_feature.astype(np.float32)
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_dd_{self.snp2_name}"
-        return self.epi_feature_name
+        return self.epi_feature.reshape(-1, 1)
+
+    def get_lo(self) -> np.str_:
+        return np.str_("dd")
+
     
 
 class EpiM78Node(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
-
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # M78 operation
         condition1 = (snp1 == 0) & (snp2 == 2)
         condition2 = (snp1 == 1) & (snp2 == 2)
         condition3 = (snp1 == 2) & (snp2 == 0)
         condition4 = (snp1 == 2) & (snp2 == 1)
         epi_feature = condition1 | condition2 | condition3 | condition4
-        self.epi_feature = epi_feature.astype(np.float32)
-        self.logical_operator = "M78"
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
+        # we have fitted this node
         self.fit_flag = True
 
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        # Always recompute the epistatic feature, regardless of train or validation data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        # M78 operation for the given data (train or validation)
+        condition1 = (snp1 == 0) & (snp2 == 2)
+        condition2 = (snp1 == 1) & (snp2 == 2)
+        condition3 = (snp1 == 2) & (snp2 == 0)
+        condition4 = (snp1 == 2) & (snp2 == 1)
+        epi_feature = condition1 | condition2 | condition3 | condition4
+        
+        # Return the computed feature for this dataset
+        return np.array(epi_feature.astype(np.float32), dtype=np.float32).reshape(-1, 1)
 
 
     def predict(self, X):
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1, snp2 = X[:, snp1_index], X[:, snp2_index]
+        # does the same operation as fit but with the test data
+        if self.fit_flag == False:
+            raise ValueError("Model not fitted yet. Please fit the model first")
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1, snp2 = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1, snp2 = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # M78 operation
         condition1 = (snp1 == 0) & (snp2 == 2)
         condition2 = (snp1 == 1) & (snp2 == 2)
         condition3 = (snp1 == 2) & (snp2 == 0)
         condition4 = (snp1 == 2) & (snp2 == 1)
         epi_feature = condition1 | condition2 | condition3 | condition4
-        return epi_feature.astype(np.float32)
+        # cast to np.float32
+        self.epi_feature = np.array(epi_feature.astype(np.float32), dtype=np.float32)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_M78_{self.snp2_name}"
-        return self.epi_feature_name
+        return self.epi_feature.reshape(-1, 1)
+
+    def get_lo(self) -> np.str_:
+        return np.str_("m78")
     
 
 # Need to change the PAGER implementation due to training/testing data
 class EpiPAGERNode(EpiNode):
     def fit(self, X, y=None):
-        # randomly select two snp names from the header list and get the corresponding columns
-        snp1_name, snp2_name = self.rng.choice(list(self.header_list), 2, replace=False)
-        self.snp1_name, self.snp2_name = snp1_name, snp2_name
-        snp1_index = np.where(self.header_list == snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == snp2_name)[0][0]
-        snp1_train, snp2_train = X[:, snp1_index], X[:, snp2_index]
-
-        # snp1_test, snp2_test = snp1_train, snp2_train # need to change this to actual test data
-
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1_train, snp2_train = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1_train, snp2_train = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        # create a DataFrame with the snp columns and the phenotype
         train_data = pd.DataFrame({
             'snp1': snp1_train,
             'snp2': snp2_train,
             'Phenotype': y
         })
-        
+
+        # calculate the mean phenotype for each snp pair
         geno_aggregations_train = train_data.groupby(['snp1', 'snp2']).agg(
             mean_phenotype=('Phenotype', 'mean')
         ).reset_index()
 
+        # calculate the relative distance of the mean phenotype to the anchor
         anchor_mean = geno_aggregations_train['mean_phenotype'].iloc[
             geno_aggregations_train['mean_phenotype'].first_valid_index()]
         geno_aggregations_train['rel_dist'] = geno_aggregations_train['mean_phenotype'] - anchor_mean
 
+        # normalize the relative distance
         scaler_train = MinMaxScaler()
         geno_aggregations_train['normalized_rel_dist'] = scaler_train.fit_transform(
             geno_aggregations_train['rel_dist'].values.reshape(-1, 1)
         )
 
-        self.mapping = geno_aggregations_train['normalized_rel_dist'] # store the PAGER values generated by using the train data
+        # store the PAGER values generated by using the train data
+        self.mapping = geno_aggregations_train[['snp1', 'snp2', 'normalized_rel_dist']] # store the PAGER values generated by using the train data
 
         train_data = pd.merge(train_data, geno_aggregations_train, on=['snp1', 'snp2'], how='left')
         pager_encoded_interactions_train = train_data['normalized_rel_dist'].values
         self.epi_feature = np.nan_to_num(pager_encoded_interactions_train, nan=0.5).astype(np.float32)
+        self.fit_flag = True
 
-        #self.epi_feature = np.nan_to_num(pager_encoded_interactions_test, nan=0.5).astype(np.float32)
-        self.logical_operator = "PAGER"
-
-        # if self.snp1_name is not None and self.snp2_name is not None:
-        #     print(f"Epi pairs in fit: {self.snp1_name}, {self.snp2_name}")
-        # else:
-        #     print(f"Error: SNP names not set correctly.")
         return self
+    
+    def transform(self, X):
+        if self.fit_flag == False or self.mapping is None:
+            raise ValueError("Mapping not set. Please fit the model first.")
+        
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1_train, snp2_train = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1_train, snp2_train = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
+        train_data = pd.DataFrame({
+            'snp1': snp1_train,
+            'snp2': snp2_train
+        })
+        train_data = pd.merge(train_data, self.mapping, on=['snp1', 'snp2'], how='left')
+        pager_encoded_interactions_train = train_data['normalized_rel_dist'].values
+        self.epi_feature = np.nan_to_num(pager_encoded_interactions_train, nan=0.5).astype(np.float32)
+
+        return self.epi_feature.reshape(-1, 1)
 
 
     def predict(self, X):
-        if self.mapping is None:
+        if self.fit_flag == False or self.mapping is None:
             raise ValueError("Mapping not set. Please fit the model first.")
         
-        snp1_index = np.where(self.header_list == self.snp1_name)[0][0]
-        snp2_index = np.where(self.header_list == self.snp2_name)[0][0]
-        snp1_test, snp2_test = X[:, snp1_index], X[:, snp2_index]
+        # get the snp columns from the input data
+        if isinstance(X, pd.DataFrame):
+            snp1_test, snp2_test = X.iloc[:, self.snp1_pos], X.iloc[:, self.snp2_pos]
+        else:
+            snp1_test, snp2_test = X[:, self.snp1_pos], X[:, self.snp2_pos]
+        
         test_data = pd.DataFrame({
             'snp1': snp1_test,
             'snp2': snp2_test
         })
         test_data = pd.merge(test_data, self.mapping, on=['snp1', 'snp2'], how='left')
         pager_encoded_interactions_test = test_data['normalized_rel_dist'].values
-        epi_feature = np.nan_to_num(pager_encoded_interactions_test, nan=0.5).astype(np.float32)
-        return epi_feature
+        self.epi_feature = np.nan_to_num(pager_encoded_interactions_test, nan=0.5).astype(np.float32)
 
-    def get_feature_names_out(self):
-        self.epi_feature_name = f"{self.snp1_name}_PAGER_{self.snp2_name}"
-        return self.epi_feature_name
+        return self.epi_feature.reshape(-1, 1)
+
+    def get_lo(self) -> np.str_:
+        return np.str_("pager")
