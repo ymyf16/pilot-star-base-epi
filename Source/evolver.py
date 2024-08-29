@@ -112,6 +112,9 @@ def ray_eval_pipeline(x_train,
     except Exception as e:
         # Catch any exceptions and print an error message
         print(f"An error occurred while fitting the model: {e}")
+        print('selector_node:', selector_node.name)
+        print('selector_node.params:', selector_node.params)
+        print('epi_nodes:', len(epi_nodes))
         return 0.0, 0
 
     # get the r2 score
@@ -382,7 +385,7 @@ class EA:
             assert len(good_interactions) <= len(interactions)
 
             # create pipeline and add to the population
-            self.population.append(self.repoduction.generate_random_pipeline(self.rng, good_interactions))
+            self.population.append(self.repoduction.generate_random_pipeline(self.rng, good_interactions, int(self.seed)))
 
         # make sure we have the correct number of pipelines
         assert len(self.population) == self.pop_size
@@ -470,9 +473,13 @@ class EA:
 
         # print postive results
         print('results')
+        tot = 0
         for res in results:
             if res[0] > 0.0:
                 print(res)
+                tot += 1
+        print('total:', tot)
+        print('type:', type(results))
 
         return results
 
@@ -522,7 +529,7 @@ class EA:
 def main():
     # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
-                 'pop_size': np.uint16(20),
+                 'pop_size': np.uint16(300),
                  'epi_cnt_max': np.uint16(300),
                  'cores': 10,
                  'mut_selector_p': np.float32(1.0),

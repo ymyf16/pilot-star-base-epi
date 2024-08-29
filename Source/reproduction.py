@@ -50,26 +50,26 @@ class Reproduction:
 
         return
 
-    def generate_random_pipeline(self, rng: rng_t, interactions: epi_interactions_t) -> Pipeline:
+    def generate_random_pipeline(self, rng: rng_t, interactions: epi_interactions_t, seed: int) -> Pipeline:
         # quick checks
         assert len(interactions) > 0
 
         # randomly select selector nodes and root nodes
-        selector_node = rng.choice([VarianceThresholdNode(rng=rng),
-                                    SelectPercentileNode(rng=rng),
-                                    SelectFweNode(rng=rng),
-                                    SelectFromModelLasso(rng=rng),
-                                    SelectFromModelTree(rng=rng),
-                                    SequentialFeatureSelectorNode(rng=rng)
+        selector_node = rng.choice([VarianceThresholdNode(rng=rng, seed=seed),
+                                    SelectPercentileNode(rng=rng, seed=seed),
+                                    SelectFweNode(rng=rng, seed=seed),
+                                    SelectFromModelLasso(rng=rng, seed=seed),
+                                    SelectFromModelTree(rng=rng, seed=seed),
+                                    SequentialFeatureSelectorNode(rng=rng, seed=seed)
                                 ])
-        root_node = rng.choice([LinearRegressionNode(rng=rng),
-                                RandomForestRegressorNode(rng=rng),
-                                SGDRegressorNode(rng=rng),
-                                DecisionTreeRegressorNode(rng=rng),
-                                ElasticNetNode(rng=rng),
-                                SVRNode(rng=rng),
-                                GradientBoostingRegressorNode(rng=rng),
-                                # MLPRegressorNode(rng=rng)
+        root_node = rng.choice([LinearRegressionNode(rng=rng, seed=seed),
+                                # RandomForestRegressorNode(rng=rng, seed=seed),
+                                SGDRegressorNode(rng=rng, seed=seed),
+                                # DecisionTreeRegressorNode(rng=rng, seed=seed),
+                                ElasticNetNode(rng=rng, seed=seed),
+                                SVRNode(rng=rng, seed=seed),
+                                # GradientBoostingRegressorNode(rng=rng, seed=seed),
+                                # MLPRegressorNode(rng=rng, seed=seed)
                             ])
         # create the pipeline
         return Pipeline(selector_node=selector_node, root_node=root_node, epi_pairs=interactions, traits=[])
