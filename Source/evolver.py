@@ -107,6 +107,8 @@ def ray_eval_pipeline(x_train,
 
     # attempt to fit the pipeline
     # with warnings.catch_warnings(record=True) as w:
+    # todo: not sure this is the best way to catch exceptions
+    # todo: Please check @nick and @attri
     try:
         pipeline_fitted = pipeline.fit(x_train, y_train)
     except Exception as e:
