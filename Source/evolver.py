@@ -331,8 +331,12 @@ class EA:
             print('Generation:', g)
 
             # evaluate all the pipelines
-            assert(len(self.population) == self.pop_size)
+            assert(0 < len(self.population) <= self.pop_size)
             r2_complexity = self.evaluation(self.population)
+
+            # print results
+            print('r2_complexity:', r2_complexity)
+            print('type:', type(r2_complexity))
 
     # initialize the starting population
     def initialize_population(self) -> None:
@@ -437,7 +441,7 @@ class EA:
         good_interactions = set()
         for snp1_name, snp2_name in interactions:
             # check if r2 is positive
-            if self.hubs.get_interaction_res(snp1_name, snp2_name) > 0:
+            if self.hubs.get_interaction_res(snp1_name, snp2_name) > np.float32(0.0):
                 # add to good interactions
                 good_interactions.add((snp1_name, snp2_name))
 
@@ -529,7 +533,7 @@ class EA:
 def main():
     # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
-                 'pop_size': np.uint16(50),
+                 'pop_size': np.uint16(300),
                  'epi_cnt_max': np.uint16(300),
                  'cores': 10,
                  'mut_selector_p': np.float32(1.0),

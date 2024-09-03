@@ -53,7 +53,7 @@ class VarianceThresholdNode(ScikitNode, TransformerMixin):
 
         # if params is an empty dictionary, then we will initialize the params
         if params == {}:
-            self.params = {'threshold': np.float32(rng.uniform(low=0.001, high=0.05))} # high is set low to allow models to have a chance to learn
+            self.params = {'threshold': np.float32(rng.uniform(low=0.0001, high=0.05))} # high is set low to allow models to have a chance to learn
         else:
             # make sure params is correct
             assert 'threshold' in params
@@ -99,8 +99,7 @@ class SelectPercentileNode(ScikitNode, TransformerMixin):
 
         # if params is an empty dictionary, then we will initialize the params
         if params == {}:
-            # TODO: are the functions for the score_func correct? @attri
-            self.params = {'percentile': np.int8(rng.integers(low=25, high=75)), 'score_func': rng.choice([f_regression, lambda X, y: mutual_info_regression(X, y, random_state=seed)])}
+            self.params = {'percentile': np.int8(rng.integers(low=50, high=100)), 'score_func': f_regression}
         else:
             # make sure params is correct
             assert 'percentile' in params
@@ -133,9 +132,6 @@ class SelectPercentileNode(ScikitNode, TransformerMixin):
         else:
             self.params['percentile'] = self.params['percentile'] + shift
 
-        # get new score_func
-        self.params['score_func'] = rng.choice([f_regression, lambda X, y: mutual_info_regression(X, y, random_state=self.seed)])
-
         self.selector = SelectPercentile(score_func=self.params['score_func'], percentile=self.params['percentile'])
 
     def get_feature_count(self):
@@ -153,7 +149,7 @@ class SelectFweNode(ScikitNode, TransformerMixin):
         # if params is an empty dictionary, then we will initialize the params
         if params == {}:
             # todo: test alpha level to get a good range for it
-            self.params = {'alpha': np.float32(rng.uniform(low=0.8, high=1.0)), 'score_func': rng.choice([f_regression, lambda X, y: mutual_info_regression(X, y, random_state=seed)])}
+            self.params = {'alpha': np.float32(rng.uniform(low=0.9, high=1.0)), 'score_func': f_regression}
         else:
             # make sure params is correct
             assert 'alpha' in params
@@ -185,9 +181,6 @@ class SelectFweNode(ScikitNode, TransformerMixin):
         # if neither of the above, then we can just add the shift
         else:
             self.params['alpha'] = self.params['alpha'] + shift
-
-        # get new score_func
-        self.params['score_func'] = rng.choice([f_regression, lambda X, y: mutual_info_regression(X, y, random_state=self.seed)])
 
         # new selector configuration
         self.selector = SelectFwe(score_func=self.params['score_func'], alpha=self.params['alpha'])
@@ -559,7 +552,7 @@ class SVRNode(ScikitNode, RegressorMixin):
         # if params is an empty dictionary, then we will initialize the params
         if params == {}:
             self.params = {'kernel': rng.choice(['linear', 'poly', 'rbf', 'sigmoid']),
-                           'degree': np.uint8(rng.choice([1,2,3])),
+                           'degree': np.int8(rng.choice([1,2,3])),
                            'gamma': rng.choice(['scale', 'auto']),
                            'C': np.float32(rng.uniform(low=0.0001, high=10.00)),
                            'epsilon': np.float32(rng.uniform(low=0.0001, high=10.00)),
@@ -630,7 +623,7 @@ class SVRNode(ScikitNode, RegressorMixin):
         # randomly pick kernel
         self.params['kernel'] = rng.choice(['linear', 'poly', 'rbf', 'sigmoid'])
         # randomly pick degree
-        self.params['degree'] = np.uint8(rng.choice([1,2,3]))
+        self.params['degree'] = np.int8(rng.choice([1,2,3]))
         # randomly pick gamma
         self.params['gamma'] = rng.choice(['scale', 'auto'])
 
@@ -648,12 +641,12 @@ class DecisionTreeRegressorNode(ScikitNode, RegressorMixin):
 
         # if params is an empty dictionary, then we will initialize the params
         if params == {}:
-            self.params = {'criterion': rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson']),
+            self.params = {'criterion': rng.choice(['squared_error', 'friedman_mse', 'absolute_error']),
                            'splitter': rng.choice(['best', 'random']),
                            'max_features': rng.choice([None, 'sqrt', 'log2']),
-                           'max_depth': np.uint8(rng.integers(1,10)),
-                           'min_samples_split': np.uint8(rng.integers(1,20)),
-                           'min_samples_leaf': np.uint8(rng.integers(1,20)),
+                           'max_depth': np.int8(rng.integers(1,10)),
+                           'min_samples_split': np.int8(rng.integers(2,20)),
+                           'min_samples_leaf': np.int8(rng.integers(1,20)),
                            'random_state': seed}
 
         else:
@@ -682,46 +675,46 @@ class DecisionTreeRegressorNode(ScikitNode, RegressorMixin):
 
     def mutate(self, rng):
         # shift for max_depth up or down
-        max_depth_shift = np.uint8(rng.choice([-1, 1]))
+        max_depth_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the max_depth is going to be less than 1
-        if self.params['max_depth'] + max_depth_shift < np.uint8(1):
-            self.params['max_depth'] = np.uint8(1)
+        if self.params['max_depth'] + max_depth_shift < np.int8(1):
+            self.params['max_depth'] = np.int8(1)
         # check if the max_depth is going to be greater than 10
-        elif self.params['max_depth'] + max_depth_shift > np.uint8(10):
-            self.params['max_depth'] = np.uint8(10)
+        elif self.params['max_depth'] + max_depth_shift > np.int8(10):
+            self.params['max_depth'] = np.int8(10)
         # if neither of the above, then we can just add the shift
         else:
             self.params['max_depth'] = self.params['max_depth'] + max_depth_shift
 
         # shift for min_samples_split up or down
-        min_samples_split_shift = np.uint8(rng.choice([-1, 1]))
+        min_samples_split_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the min_samples_split is going to be less than 1
-        if self.params['min_samples_split'] + min_samples_split_shift < np.uint8(1):
-            self.params['min_samples_split'] = np.uint8(1)
+        if self.params['min_samples_split'] + min_samples_split_shift < np.int8(2):
+            self.params['min_samples_split'] = np.int8(2)
         # check if the min_samples_split is going to be greater than 20
-        elif self.params['min_samples_split'] + min_samples_split_shift > np.uint8(20):
-            self.params['min_samples_split'] = np.uint8(20)
+        elif self.params['min_samples_split'] + min_samples_split_shift > np.int8(20):
+            self.params['min_samples_split'] = np.int8(20)
         # if neither of the above, then we can just add the shift
         else:
             self.params['min_samples_split'] = self.params['min_samples_split'] + min_samples_split_shift
 
         # shift for min_samples_leaf up or down
-        min_samples_leaf_shift = np.uint8(rng.choice([-1, 1]))
+        min_samples_leaf_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the min_samples_leaf is going to be less than 1
-        if self.params['min_samples_leaf'] + min_samples_leaf_shift < np.uint8(1):
-            self.params['min_samples_leaf'] = np.uint8(1)
+        if self.params['min_samples_leaf'] + min_samples_leaf_shift < np.int8(1):
+            self.params['min_samples_leaf'] = np.int8(1)
         # check if the min_samples_leaf is going to be greater than 20
-        elif self.params['min_samples_leaf'] + min_samples_leaf_shift > np.uint8(20):
-            self.params['min_samples_leaf'] = np.uint8(20)
+        elif self.params['min_samples_leaf'] + min_samples_leaf_shift > np.int8(20):
+            self.params['min_samples_leaf'] = np.int8(20)
         # if neither of the above, then we can just add the shift
         else:
             self.params['min_samples_leaf'] = self.params['min_samples_leaf'] + min_samples_leaf_shift
 
         # randomly pick criterion
-        self.params['criterion'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson'])
+        self.params['criterion'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error'])
         # randomly pick splitter
         self.params['splitter'] = rng.choice(['best', 'random'])
         # randomly pick max_features
@@ -742,11 +735,11 @@ class RandomForestRegressorNode(ScikitNode, RegressorMixin):
         # if params is an empty dictionary, then we will initialize the params
         if params == {}:
             self.params = {'n_estimators': np.int8(rng.integers(10,100)),
-                           'criterion': rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson']),
-                           'max_depth': np.uint8(rng.integers(1,10)),
+                           'criterion': rng.choice(['squared_error', 'friedman_mse', 'absolute_error']),
+                           'max_depth': np.int8(rng.integers(1,10)),
                            'max_features': rng.choice([None, 'sqrt', 'log2']),
-                           'min_samples_split': np.uint8(rng.integers(1,20)),
-                           'min_samples_leaf': np.uint8(rng.integers(1,20)),
+                           'min_samples_split': np.int8(rng.integers(2,20)),
+                           'min_samples_leaf': np.int8(rng.integers(1,20)),
                            'random_state': seed}
         else:
             assert len(params) == 8
@@ -788,46 +781,46 @@ class RandomForestRegressorNode(ScikitNode, RegressorMixin):
             self.params['n_estimators'] = self.params['n_estimators'] + n_estimators_shift
 
         # shift for max_depth up or down
-        max_depth_shift = np.uint8(rng.choice([-1, 1]))
+        max_depth_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the max_depth is going to be less than 1
-        if self.params['max_depth'] + max_depth_shift < np.uint8(1):
-            self.params['max_depth'] = np.uint8(1)
+        if self.params['max_depth'] + max_depth_shift < np.int8(1):
+            self.params['max_depth'] = np.int8(1)
         # check if the max_depth is going to be greater than 10
-        elif self.params['max_depth'] + max_depth_shift > np.uint8(10):
-            self.params['max_depth'] = np.uint8(10)
+        elif self.params['max_depth'] + max_depth_shift > np.int8(10):
+            self.params['max_depth'] = np.int8(10)
         # if neither of the above, then we can just add the shift
         else:
             self.params['max_depth'] = self.params['max_depth'] + max_depth_shift
 
         # shift for min_samples_split up or down
-        min_samples_split_shift = np.uint8(rng.choice([-1, 1]))
+        min_samples_split_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the min_samples_split is going to be less than 1
-        if self.params['min_samples_split'] + min_samples_split_shift < np.uint8(1):
-            self.params['min_samples_split'] = np.uint8(1)
+        if self.params['min_samples_split'] + min_samples_split_shift < np.int8(2):
+            self.params['min_samples_split'] = np.int8(2)
         # check if the min_samples_split is going to be greater than 20
-        elif self.params['min_samples_split'] + min_samples_split_shift > np.uint8(20):
-            self.params['min_samples_split'] = np.uint8(20)
+        elif self.params['min_samples_split'] + min_samples_split_shift > np.int8(20):
+            self.params['min_samples_split'] = np.int8(20)
         # if neither of the above, then we can just add the shift
         else:
             self.params['min_samples_split'] = self.params['min_samples_split'] + min_samples_split_shift
 
         # shift for min_samples_leaf up or down
-        min_samples_leaf_shift = np.uint8(rng.choice([-1, 1]))
+        min_samples_leaf_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the min_samples_leaf is going to be less than 1
-        if self.params['min_samples_leaf'] + min_samples_leaf_shift < np.uint8(1):
-            self.params['min_samples_leaf'] = np.uint8(1)
+        if self.params['min_samples_leaf'] + min_samples_leaf_shift < np.int8(1):
+            self.params['min_samples_leaf'] = np.int8(1)
         # check if the min_samples_leaf is going to be greater than 20
-        elif self.params['min_samples_leaf'] + min_samples_leaf_shift > np.uint8(20):
-            self.params['min_samples_leaf'] = np.uint8(20)
+        elif self.params['min_samples_leaf'] + min_samples_leaf_shift > np.int8(20):
+            self.params['min_samples_leaf'] = np.int8(20)
         # if neither of the above, then we can just add the shift
         else:
             self.params['min_samples_leaf'] = self.params['min_samples_leaf'] + min_samples_leaf_shift
 
         # randomly pick criterion
-        self.params['criterion'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson'])
+        self.params['criterion'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error'])
         # randomly pick max_features
         self.params['max_features'] = rng.choice([None, 'sqrt', 'log2'])
 
@@ -847,8 +840,8 @@ class GradientBoostingRegressorNode(ScikitNode, RegressorMixin):
         if params == {}:
             self.params = {'loss': rng.choice(['squared_error', 'absolute_error', 'huber', 'quantile']),
                            'learning_rate': rng.uniform(low=1e-3, high=1.0),
-                           'n_estimators': np.uint8(rng.integers(10,100)),
-                           'criterion': rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson']),
+                           'n_estimators': np.int8(rng.integers(10,100)),
+                           'criterion': rng.choice(['squared_error', 'friedman_mse']),
                            'max_depth': rng.integers(1,10),
                            'min_samples_split': rng.integers(2,20),
                            'min_samples_leaf': rng.integers(1,20),
@@ -907,40 +900,40 @@ class GradientBoostingRegressorNode(ScikitNode, RegressorMixin):
             self.params['n_estimators'] = self.params['n_estimators'] + n_estimators_shift
 
         # shift for max_depth up or down
-        max_depth_shift = np.uint8(rng.choice([-1, 1]))
+        max_depth_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the max_depth is going to be less than 1
-        if self.params['max_depth'] + max_depth_shift < np.uint8(1):
-            self.params['max_depth'] = np.uint8(1)
+        if self.params['max_depth'] + max_depth_shift < np.int8(1):
+            self.params['max_depth'] = np.int8(1)
         # check if the max_depth is going to be greater than 10
-        elif self.params['max_depth'] + max_depth_shift > np.uint8(10):
-            self.params['max_depth'] = np.uint8(10)
+        elif self.params['max_depth'] + max_depth_shift > np.int8(10):
+            self.params['max_depth'] = np.int8(10)
         # if neither of the above, then we can just add the shift
         else:
             self.params['max_depth'] = self.params['max_depth'] + max_depth_shift
 
         # shift for min_samples_split up or down
-        min_samples_split_shift = np.uint8(rng.choice([-1, 1]))
+        min_samples_split_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the min_samples_split is going to be less than 1
-        if self.params['min_samples_split'] + min_samples_split_shift < np.uint8(1):
-            self.params['min_samples_split'] = np.uint8(1)
+        if self.params['min_samples_split'] + min_samples_split_shift < np.int8(2):
+            self.params['min_samples_split'] = np.int8(2)
         # check if the min_samples_split is going to be greater than 20
-        elif self.params['min_samples_split'] + min_samples_split_shift > np.uint8(20):
-            self.params['min_samples_split'] = np.uint8(20)
+        elif self.params['min_samples_split'] + min_samples_split_shift > np.int8(20):
+            self.params['min_samples_split'] = np.int8(20)
         # if neither of the above, then we can just add the shift
         else:
             self.params['min_samples_split'] = self.params['min_samples_split'] + min_samples_split_shift
 
         # shift for min_samples_leaf up or down
-        min_samples_leaf_shift = np.uint8(rng.choice([-1, 1]))
+        min_samples_leaf_shift = np.int8(rng.choice([-1, 1]))
 
         # check if the min_samples_leaf is going to be less than 1
-        if self.params['min_samples_leaf'] + min_samples_leaf_shift < np.uint8(1):
-            self.params['min_samples_leaf'] = np.uint8(1)
+        if self.params['min_samples_leaf'] + min_samples_leaf_shift < np.int8(1):
+            self.params['min_samples_leaf'] = np.int8(1)
         # check if the min_samples_leaf is going to be greater than 20
-        elif self.params['min_samples_leaf'] + min_samples_leaf_shift > np.uint8(20):
-            self.params['min_samples_leaf'] = np.uint8(20)
+        elif self.params['min_samples_leaf'] + min_samples_leaf_shift > np.int8(20):
+            self.params['min_samples_leaf'] = np.int8(20)
         # if neither of the above, then we can just add the shift
         else:
             self.params['min_samples_leaf'] = self.params['min_samples_leaf'] + min_samples_leaf_shift
@@ -948,7 +941,7 @@ class GradientBoostingRegressorNode(ScikitNode, RegressorMixin):
         # randomly pick loss
         self.params['loss'] = rng.choice(['squared_error', 'absolute_error', 'huber', 'quantile'])
         # randomly pick criterion
-        self.params['criterion'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error', 'poisson'])
+        self.params['criterion'] = rng.choice(['squared_error', 'friedman_mse', 'absolute_error'])
 
         # new regressor configuration
         self.regressor = GradientBoostingRegressor(**self.params)
@@ -970,9 +963,10 @@ class MLPRegressorNode(ScikitNode, RegressorMixin):
                            'alpha': rng.uniform(low = 1e-7, high = 1e-1),
                            'learning_rate': rng.choice(['constant', 'invscaling', 'adaptive']),
                            'learning_rate_init': rng.uniform(low = 1e-4, high = 1e-1 ),
+                           'max_iter': np.uint16(rng.choice([500,600,700,800,900,1000])),
                            'random_state': seed}
         else:
-            assert len(params) == 7
+            assert len(params) == 8
             assert 'hidden_layer_sizes' in params
             assert 'activation' in params
             assert 'solver' in params
@@ -980,6 +974,7 @@ class MLPRegressorNode(ScikitNode, RegressorMixin):
             assert 'learning_rate' in params
             assert 'learning_rate_init' in params
             assert 'random_state' in params
+            assert 'max_iter' in params
             self.params = params
 
         # initialize the regressor
@@ -1032,6 +1027,8 @@ class MLPRegressorNode(ScikitNode, RegressorMixin):
         self.params['solver'] = rng.choice(['lbfgs', 'sgd', 'adam'])
         # randomly pick learning_rate
         self.params['learning_rate'] = rng.choice(['constant', 'invscaling', 'adaptive'])
+        # randomly pick max_iter
+        self.params['max_iter'] = np.uint16(rng.choice([500,600,700,800,900,1000]))
 
         # new regressor configuration
         self.regressor = MLPRegressor(**self.params)
