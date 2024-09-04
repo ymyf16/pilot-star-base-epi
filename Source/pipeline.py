@@ -29,14 +29,18 @@ class Pipeline:
         self.selector_node = cp.deepcopy(selector_node) # will contain the selector node
         self.root_node = cp.deepcopy(root_node) # will contain the regressor node
 
-    def get_trait_r2(self) -> np.float32:
-        assert len(self.traits) == 2
-        return self.traits['r2']
+    # method to set the epi_pairs
+    def set_epi_pairs(self, epi_pairs: epi_pairs_t) -> None:
+        # check that internal epi_pairs is empty
+        assert len(self.epi_pairs) == 0
+        # make sure that the epi_pairs are not empty
+        assert len(epi_pairs) > 0
 
-    def get_trait_feature_cnt(self) -> np.uint16:
-        assert len(self.traits) == 2
-        return self.traits['feature_cnt']
+        # update the epi_pairs
+        self.epi_pairs = cp.deepcopy(epi_pairs)
+        return
 
+    # set traits
     def set_traits(self, traits: traits_t) -> None:
         # check that internal traits is empty
         assert len(self.traits) == 0
@@ -44,8 +48,16 @@ class Pipeline:
         assert len(traits) == 2
 
         # update the traits
-        self.traits.update(traits)
+        self.traits = cp.deepcopy(traits)
         return
+
+    def get_trait_r2(self) -> np.float32:
+        assert len(self.traits) == 2
+        return self.traits[0]
+
+    def get_trait_feature_cnt(self) -> np.uint16:
+        assert len(self.traits) == 2
+        return self.traits[1]
 
     def get_traits(self) -> traits_t:
         return self.traits
@@ -69,7 +81,6 @@ class Pipeline:
     def get_root_node(self):
         return self.root_node
 
-
     # print the pipeline
     def print_pipeline(self) -> None:
         print("Pipeline:")
@@ -78,9 +89,9 @@ class Pipeline:
         for epi_node in self.epi_pairs:
             print(epi_node)
         print("Selector Node:")
-        print(self.selector_node)
+        print(self.selector_node.selector)
         print("Root Node:")
-        print(self.root_node)
+        print(self.root_node.regressor)
         return
 
     def mutate_selector_node(self, rng: gen_rng_t) -> None:

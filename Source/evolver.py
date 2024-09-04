@@ -25,6 +25,8 @@ from sklearn.pipeline import Pipeline as SklearnPipeline
 from sklearn.pipeline import FeatureUnion
 from sklearn.linear_model import LinearRegression
 from reproduction import Reproduction
+import numpy.typing as npt
+import nsga_tool as nsga
 
 # snp name type
 snp_name_t = np.str_
@@ -32,6 +34,8 @@ snp_name_t = np.str_
 snp_hub_pos_t = np.uint32
 # epi node list type
 epi_node_list_t = List[EpiNode]
+# probability type: needed to avoid rounding errors with probabilities
+prob_t = np.float64
 
 @ray.remote
 def ray_lo_eval(x_train,
@@ -117,7 +121,7 @@ def ray_eval_pipeline(x_train,
         print('selector_node:', selector_node.name)
         print('selector_node.params:', selector_node.params)
         print('epi_nodes:', len(epi_nodes))
-        return 0.0, 0
+        return 0.0, 0, 0
 
     # get the r2 score
     r2_score = pipeline_fitted.score(x_val, y_val)
@@ -134,16 +138,16 @@ class EA:
                  pop_size: np.uint16,
                  epi_cnt_max: np.uint16,
                  cores: int,
-                 mut_prob: np.float32 = np.float32(.5),
-                 cross_prob: np.float32 = np.float32(.5),
-                 mut_selector_p: np.float32 = np.float32(.5),
-                 mut_regressor_p: np.float32 = np.float32(.5),
-                 mut_ran_p: np.float32 = np.float32(.45),
-                 mut_non_p: np.float32 = np.float32(.1),
-                 mut_smt_p: np.float32 = np.float32(.45),
-                 smt_in_in_p: np.float32 = np.float32(.1),
-                 smt_in_out_p: np.float32 = np.float32(.45),
-                 smt_out_out_p: np.float32 = np.float32(.45)) -> None:
+                 mut_prob: prob_t = prob_t(.5),
+                 cross_prob: prob_t = prob_t(.5),
+                 mut_selector_p: prob_t = prob_t(.5),
+                 mut_regressor_p: prob_t = prob_t(.5),
+                 mut_ran_p: prob_t = prob_t(.45),
+                 mut_non_p: prob_t = prob_t(.1),
+                 mut_smt_p: prob_t = prob_t(.45),
+                 smt_in_in_p: prob_t = prob_t(.1),
+                 smt_in_out_p: prob_t = prob_t(.45),
+                 smt_out_out_p: prob_t = prob_t(.45)) -> None:
         """
         Main class for the evolutionary algorithm.
 
@@ -154,17 +158,17 @@ class EA:
             Population size.
         epi_cnt_max: np.uint16
             Maximum number of epistatic interactions (nodes).
-        mut_ran_p: np.float32
+        mut_ran_p: prob_t
             Probability for random mutation.
-        mut_smt_p: np.float32
+        mut_smt_p: prob_t
             Probability for smart mutation.
-        mut_non_p: np.float32
+        mut_non_p: prob_t
             Probability for no mutation.
-        smt_in_in_p: np.float32
+        smt_in_in_p: prob_t
             Probability for smart mutation, new snp comes from the same chromosome and assigned bin.
-        smt_in_out_p: np.float32
+        smt_in_out_p: prob_t
             Probability for smart mutation, new snp comes from the same chromosome but different bin.
-        smt_out_out_p: np.float32
+        smt_out_out_p: prob_t
             Probability for smart mutation, new snp comes from a different chromosome (different bin by definition).
         """
 
@@ -330,22 +334,112 @@ class EA:
 
         # run the algorithm for the specified number of generations
         for g in range(gens):
+            # make sure we have the correct number of pipelines
+            assert(0 < len(self.population) <= self.pop_size)
+
             print('Generation:', g)
 
-            # evaluate all the pipelines
-            assert(0 < len(self.population) <= self.pop_size)
-            r2_complexity = self.evaluation(self.population)
+            # how many extra pipeline offspring do we need to fill up considered solutions
+            extra_offspring = self.pop_size - len(self.population)
+            # get order of mutation/crossover to do with the extra offspring
+            var_order, parent_cnt = self.repoduction.variation_order(self.rng, np.uint16(extra_offspring + self.pop_size))
+            # get the parent scores by position
+            parent_ids = self.parent_selection(np.array([[pipeline.get_trait_r2(), pipeline.get_trait_feature_cnt()] for pipeline in self.population], dtype=np.float32), parent_cnt)
 
-            # print results
-            print('r2_complexity:', r2_complexity)
-            print('type:', type(r2_complexity))
+            # generate offspring
+            # todo: evaluate all unseen offspring pipeline interactions
+            offspring = self.repoduction.produce_offspring(rng = self.rng,
+                                                           hub = self.hubs,
+                                                           offspring_cnt=np.uint16(extra_offspring + self.pop_size),
+                                                           parent_ids=parent_ids,
+                                                           population=self.population,
+                                                           order=var_order,
+                                                           seed=int(self.seed))
+            # make sure we have the correct number of competing solutions
+            assert len(offspring) + len(self.population) == 2 * self.pop_size
+
+            # process offspring: evaluation interactions and remove bad interactions
+            offspring = self.process_offspring(offspring)
+
+            # evaluate the offspring
+            offspring_scores = self.evaluation(offspring)
+            assert(len(offspring_scores) == len(offspring))
+
+            # update offspring with scores
+            for score, pipeline in zip(offspring_scores, offspring):
+                pipeline.set_traits([score[0], np.uint16(score[1])])
+
+            # make sure the correct number of solutions are competing prior to negative r2 filtering
+            assert len(offspring_scores) + len(self.population) == 2 * self.pop_size
+
+            # survival selection
+            self.population = self.survival_selection(self.population, offspring, offspring_scores)
+
+            # make sure we have the correct number of pipelines
+            assert len(self.population) == self.pop_size
+
+    # survival selection
+    def survival_selection(self,
+                           current_pop: List[Pipeline],
+                           offspring: List[Pipeline],
+                           offspring_scores: List[Tuple[np.float32, np.uint16, np.int16]]) -> List[Pipeline]:
+        """
+        Function to select the survivors from the current population and offspring.
+
+        Parameters:
+        current_pop: List[Pipeline]
+            Current population of pipelines.
+        offspring: List[Pipeline]
+            Offspring population of pipelines.
+        """
+        # subset the offspring to only include pipelines with positive r2 scores
+        offspring = [offspring[offspring_scores[i][2]] for i in range(len(offspring_scores)) if offspring_scores[i][0] > 0.0]
+        # subset the scores to only include pipelines with positive r2 scores: [(r2, complexity),...]
+        positive_offspring_scores = [(offspring_scores[i][0], offspring_scores[i][1]) for i in range(len(offspring_scores)) if offspring_scores[i][0] > 0.0]
+        # get all scores from the current population
+        population_scores = [(pipeline.get_trait_r2(), pipeline.get_trait_feature_cnt()) for pipeline in self.population]
+        # make sure all population scores are positive
+        assert all(pipeline.get_trait_r2() > 0.0 for pipeline in self.population)
+
+        # combine both the population and offspring scores
+        all_scores = np.array(np.concatenate((population_scores, positive_offspring_scores), axis=0), dtype=np.float32)
+        assert len(all_scores) == len(self.population) + len(positive_offspring_scores)
+        assert len(all_scores) >= self.pop_size
+
+        # get the fronts and rank
+        fronts, ranks = nsga.non_dominated_sorting(all_scores)
+
+        # get crowding distance for each solution
+        crowding_distance = nsga.crowding_distance(all_scores, np.int32(2))
+
+        # truncate the population to the population size with nsga ii
+        survivor_ids = nsga.non_dominated_truncate(fronts, crowding_distance, self.pop_size)
+        # make sure that the number of survivors is correct
+        assert len(survivor_ids) == self.pop_size
+
+        # combine the population and offspring
+        candidates = self.population + offspring
+
+        # subset the candidates to only include the survivors
+        new_pop = []
+
+        for i in survivor_ids:
+            # make sure we are within the bounds of the candidates
+            assert 0 <= i < len(candidates)
+            new_pop.append(candidates[i])
+
+        return new_pop
 
     # initialize the starting population
     def initialize_population(self) -> None:
         """
-        Function to initialize the population of pipelines with their set of epistatic interactions.
-        We start by creating a random set of interactions and set them within a pipeline.
-        Once we all pipelines have their initial set of interactions, we move on to finidng the best lo's.
+        Initialize the population of pipelines with their set of epistatic interactions.
+        We start by creating (2 * pop_size) random set of interactions and find their best lo from the 9 we use.
+        After, we remove bad interactions (negative r2) for a given set and create pipelines from the good interactions.
+        We then evaluate the pipelines and keep only the pipelines with positive r2 scores.
+
+        If the number of pipelines with positive r2 scores is less than the population size, we keep the same population.
+        If the number of pipelines with positive r2 scores is greater than the population size, we use NSGA-II to get the pareto front.
         """
         # will hold sets of interactions for each pipeline in the population
         pop_epi_interactions = []
@@ -353,7 +447,9 @@ class EA:
         unseen_interactions = set()
 
         # create the initial population
-        for _ in range(self.pop_size):
+        # we create double the population size to account for bad interactions
+        # which are are extremely common given the nature of epistatic interactions
+        for _ in range(self.pop_size * 2):
             # how many epi nodes to create
             # lower bound will be half of what the user specified
             # upper bound will be the actual user specified mas
@@ -378,7 +474,7 @@ class EA:
             pop_epi_interactions.append(interactions)
 
         # make sure we have the correct number of interactions
-        assert len(pop_epi_interactions) == self.pop_size
+        assert len(pop_epi_interactions) == 2 * self.pop_size
 
         # evaluate all unseen interactions
         self.evaluate_unseen_interactions(unseen_interactions)
@@ -394,7 +490,39 @@ class EA:
             self.population.append(self.repoduction.generate_random_pipeline(self.rng, good_interactions, int(self.seed)))
 
         # make sure we have the correct number of pipelines
-        assert len(self.population) == self.pop_size
+        assert len(self.population) ==  2 * self.pop_size
+
+        # evaluate the initial population
+        scores =  self.evaluation(self.population)
+
+        # subset the population to only include pipelines with positive r2 scores
+        self.population = [self.population[scores[i][2]] for i in range(len(scores)) if scores[i][0] > 0.0]
+        # subset the scores to only include pipelines with positive r2 scores: [(r2, complexity),...]
+        positive_scores = np.array([(scores[i][0], scores[i][1]) for i in range(len(scores)) if scores[i][0] > 0.0], dtype=np.float32)
+        # make sure that the size of scores matches the population size
+        assert len(positive_scores) == len(self.population)
+
+        # assign traits to each pipeline
+        for score, pipeline in zip(positive_scores, self.population):
+            pipeline.set_traits([score[0], np.uint16(score[1])])
+
+        # if size positive_scores is less than the population size, we keep the same population
+        if len(positive_scores) < self.pop_size:
+            return
+        # else we use nsga to get the pareto front from all the pipelines in the population
+        else:
+            # get the fronts and rank
+            fronts, ranks = nsga.non_dominated_sorting(positive_scores)
+            # make sure that the number of fronts is correct
+            assert sum([len(f) for f in fronts]) == len(ranks)
+
+            # get crowding distance for each solution
+            crowding_distance = nsga.crowding_distance(positive_scores, np.int32(2))
+
+            # truncate the population to the population size with nsga ii
+            survivor_ids = nsga.non_dominated_truncate(fronts, crowding_distance, self.pop_size)
+            self.population = [self.population[i] for i in survivor_ids]
+            return
 
     # evaluate all unseed interactions and update the GenoHub
     def evaluate_unseen_interactions(self, unseen_interactions: Set[Tuple]) -> None:
@@ -459,7 +587,7 @@ class EA:
         for p in self.population:
             p.print_pipeline()
 
-    # evaluate the population
+    # evaluate the population                                   # r2 , feature count, pop_id
     def evaluation(self, pop: List[Pipeline]) -> List[Tuple[np.float32, np.uint16, np.int16]]:
         # collect all parallel jobs
         ray_jobs = []
@@ -476,16 +604,6 @@ class EA:
                                                      np.int16(i)))
         # run all ray jobs
         results = ray.get(ray_jobs)
-
-        # print postive results
-        print('results')
-        tot = 0
-        for res in results:
-            if res[0] > 0.0:
-                print(res)
-                tot += 1
-        print('total:', tot)
-        print('type:', type(results))
 
         return results
 
@@ -532,22 +650,88 @@ class EA:
         # return the list of epi nodes
         return epi_nodes
 
+    # parent selection
+    def parent_selection(self, scores: npt.NDArray[np.float32],
+                         parent_cnt: np.uint16) -> List[np.uint16]:
+        """
+        Function to return a specified number of parent ids based on the scores of the pipelines.
+
+        Parameters:
+        scores: List[Tuple[np.float32, np.uint16, np.int16]] # r2 , feature count, pop_id
+            Scores of the pipelines (scores: np.array([r2,complexity])).
+        """
+        # make sure that the size of scores matches the population size
+        assert len(scores) == len(self.population)
+
+        # will hold the parent ids
+        parent_ids = []
+
+        # get the fronts and rank
+        fronts, ranks = nsga.non_dominated_sorting(scores)
+        # make sure that the number of fronts is correct
+        assert sum([len(f) for f in fronts]) == len(ranks)
+
+        # get crowding distance for each solution
+        crowding_distance = nsga.crowding_distance(scores, np.int32(2))
+
+        # get parent_cnt number of parents
+        for _ in range(parent_cnt):
+            parent_ids.append(nsga.non_dominated_binary_tournament(rng=self.rng, ranks=ranks, distances=crowding_distance))
+        # make sure that the number of parents is correct
+        assert len(parent_ids) == parent_cnt
+
+        return parent_ids
+
+    # process offspring
+    def process_offspring(self, pipelines: List[Pipeline]) -> List[Pipeline]:
+
+        # get unseen interactions
+        unseen_interactions = self.get_unseen_interactions(pipelines)
+
+        # evaluate all unseen interactions
+        self.evaluate_unseen_interactions(unseen_interactions)
+
+        # remove bad interactions for each pipeline's set of interactions
+        updated_pipelines = []
+        for pipeline in pipelines:
+            good_interactions = self.remove_bad_interactions(pipeline.get_epi_pairs())
+            updated_pipelines.append(Pipeline(good_interactions, pipeline.get_selector_node(), pipeline.get_root_node(), []))
+
+        return updated_pipelines
+
+    # get unseen intreactions from offspring pipelines
+    def get_unseen_interactions(self, pipelines: List[Pipeline]) -> Set[Tuple[snp_name_t,snp_name_t]]:
+        """
+        Function to get unseen interactions from offspring pipelines.
+
+        Parameters:
+        pipelines: List[Pipeline]
+            List of pipelines.
+        """
+        unseen_interactions = set()
+        for pipeline in pipelines:
+            for snp1_name, snp2_name in pipeline.get_epi_pairs():
+                if self.hubs.is_interaction_in_hub(snp1_name, snp2_name) == False:
+                    unseen_interactions.add((snp1_name, snp2_name))
+
+        return unseen_interactions
+
 def main():
     # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
                  'pop_size': np.uint16(300),
                  'epi_cnt_max': np.uint16(300),
                  'cores': 10,
-                 'mut_selector_p': np.float32(1.0),
-                 'mut_regressor_p': np.float32(.5),
-                 'mut_ran_p':np.float32(.45),
-                 'mut_smt_p': np.float32(.45),
-                 'mut_non_p': np.float32(.1),
-                 'smt_in_in_p': np.float32(.1),
-                 'smt_in_out_p': np.float32(.45),
-                 'smt_out_out_p': np.float32(.45),
-                 'mut_prob': np.float32(.5),
-                 'cross_prob': np.float32(.5)}
+                 'mut_selector_p': np.float64(1.0),
+                 'mut_regressor_p': np.float64(.5),
+                 'mut_ran_p':np.float64(.45),
+                 'mut_smt_p': np.float64(.45),
+                 'mut_non_p': np.float64(.1),
+                 'smt_in_in_p': np.float64(.10),
+                 'smt_in_out_p': np.float64(.450),
+                 'smt_out_out_p': np.float64(.450),
+                 'mut_prob': np.float64(.5),
+                 'cross_prob': np.float64(.5)}
 
     ea = EA(**ea_config)
     # need to update the path to the data file
@@ -555,7 +739,7 @@ def main():
     # data_dir = '/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/18qtl_pruned_BMIres.csv'
     ea.data_loader(data_dir)
     ea.initialize_hubs(20)
-    ea.evolve(1)
+    ea.evolve(100)
 
 
     ray.shutdown()
