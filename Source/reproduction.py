@@ -19,7 +19,7 @@ import copy as cp
 # feature selectors
 from scikit_node import VarianceThresholdNode, SelectPercentileNode, SelectFweNode, SelectFromModelLasso, SelectFromModelTree, SequentialFeatureSelectorNode
 # regressors
-from scikit_node import LinearRegressionNode, RandomForestRegressorNode, SGDRegressorNode, DecisionTreeRegressorNode, ElasticNetNode, SVRNode, GradientBoostingRegressorNode, MLPRegressorNode
+from scikit_node import LinearRegressionNode, RandomForestRegressorNode, SGDRegressorNode, DecisionTreeRegressorNode, ElasticNetNode, SVRNode, GradientBoostingRegressorNode
 
 rng_t = np.random.Generator
 pop_size_t = np.uint16
@@ -76,7 +76,6 @@ class Reproduction:
                                 ElasticNetNode(rng=rng, seed=seed),
                                 SVRNode(rng=rng, seed=seed),
                                 GradientBoostingRegressorNode(rng=rng, seed=seed),
-                                MLPRegressorNode(rng=rng, seed=seed)
                             ])
         # create the pipeline
         return Pipeline(selector_node=selector_node, root_node=root_node, epi_pairs=interactions, traits=[])
@@ -224,7 +223,6 @@ class Reproduction:
         # print()
 
         return offspring
-
 
     # execute a smart mutation on the epi_node
     def mutate_epi_node_smrt(self,

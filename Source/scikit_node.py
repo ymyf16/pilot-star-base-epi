@@ -148,8 +148,7 @@ class SelectFweNode(ScikitNode, TransformerMixin):
 
         # if params is an empty dictionary, then we will initialize the params
         if params == {}:
-            # todo: test alpha level to get a good range for it
-            self.params = {'alpha': np.float32(rng.uniform(low=0.9, high=1.0)), 'score_func': f_regression}
+            self.params = {'alpha': np.float32(rng.uniform(low=1e-4, high=0.05)), 'score_func': f_regression}
         else:
             # make sure params is correct
             assert 'alpha' in params
@@ -447,7 +446,7 @@ class SGDRegressorNode(ScikitNode, RegressorMixin):
                            'fit_intercept': rng.choice([True, False]),
                            'epsilon': np.float32(rng.uniform(low=0.0001, high=10.00)),
                            'learning_rate': rng.choice(['constant','optimal','invscaling','adaptive']),
-                           'eta0': np.float32(rng.uniform(low=0.0001, high=10.00)),
+                           'eta0': np.float32(rng.uniform(low=1e-7, high=0.01)),
                            'random_state': seed}
         else:
             assert len(params) == 9
@@ -946,52 +945,7 @@ class GradientBoostingRegressorNode(ScikitNode, RegressorMixin):
         # new regressor configuration
         self.regressor = GradientBoostingRegressor(**self.params)
 
-# Multi-layer perceptron regression
-class MLPRegressorNode(ScikitNode, RegressorMixin):
-    def __init__(self,
-                rng: rng_t,
-                seed: int = None,
-                params: Dict = {},
-                name: name_t = name_t('RandomForestRegressor')):
-        super().__init__(name)
 
-        # if params is an empty dictionary, then we will initialize the params
-        if params == {}:
-            self.params = {'hidden_layer_sizes': (rng.integers(10,100),),
-                           'activation': rng.choice(['identity', 'logistic', 'tanh', 'relu']),
-                           'solver': rng.choice(['lbfgs', 'sgd', 'adam']),
-                           'alpha': rng.uniform(low = 1e-7, high = 1e-1),
-                           'learning_rate': rng.choice(['constant', 'invscaling', 'adaptive']),
-                           'learning_rate_init': rng.uniform(low = 1e-4, high = 1e-1 ),
-                           'max_iter': np.uint16(rng.choice([500,600,700,800,900,1000])),
-                           'random_state': seed}
-        else:
-            assert len(params) == 8
-            assert 'hidden_layer_sizes' in params
-            assert 'activation' in params
-            assert 'solver' in params
-            assert 'alpha' in params
-            assert 'learning_rate' in params
-            assert 'learning_rate_init' in params
-            assert 'random_state' in params
-            assert 'max_iter' in params
-            self.params = params
-
-        # initialize the regressor
-        self.regressor = MLPRegressor(**self.params)
-        self.seed = seed
-
-    def fit(self, X, y):
-        self.regressor.fit(X, y)
-
-    def predict(self, X):
-        return self.regressor.predict(X)
-
-    def transform(self, X):
-        # For consistency with the abstract class, we use the regressor's prediction as the transform output
-        return self.predict(X)
-
-    def mutate(self, rng):
         # update hidden_layer_sizes
         self.params['hidden_layer_sizes'] = (rng.integers(10,100),)
 

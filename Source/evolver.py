@@ -27,6 +27,9 @@ from sklearn.linear_model import LinearRegression
 from reproduction import Reproduction
 import numpy.typing as npt
 import nsga_tool as nsga
+import logging
+import warnings
+from sklearn.exceptions import NotFittedError, ConvergenceWarning
 
 # snp name type
 snp_name_t = np.str_
@@ -105,28 +108,39 @@ def ray_eval_pipeline(x_train,
     steps.append(('selector', selector_node))
     # add the root node
     steps.append(('root', root_node))
-
     # transform internal pipeline representation into sklearn pipeline with PipelineBuilder class
     pipeline = SklearnPipeline(steps=steps)
 
     # attempt to fit the pipeline
-    # with warnings.catch_warnings(record=True) as w:
-    # todo: not sure this is the best way to catch exceptions
-    # todo: Please check @nick and @attri
     try:
-        pipeline_fitted = pipeline.fit(x_train, y_train)
+        # Fit the pipeline with warnings captured as exceptions
+        with warnings.catch_warnings():
+            warnings.filterwarnings('error', category=ConvergenceWarning)
+            pipeline_fitted = pipeline.fit(x_train, y_train)
+    except ConvergenceWarning as cw:
+        logging.error(f"ConvergenceWarning while fitting model: {cw}")
+        logging.error(f"selector_node: {selector_node.name}")
+        logging.error(f"selector_node.params: {selector_node.params}")
+        logging.error(f"epi_nodes: {len(epi_nodes)}")
+        return -1.0, 0, 0
+    except NotFittedError as nfe:
+        logging.error(f"NotFittedError occurred: {nfe}")
+        return -1.0, 0, 0
     except Exception as e:
-        # Catch any exceptions and print an error message
-        print(f"An error occurred while fitting the model: {e}")
-        print('selector_node:', selector_node.name)
-        print('selector_node.params:', selector_node.params)
-        print('epi_nodes:', len(epi_nodes))
-        return 0.0, 0, 0
+        # Catch all other exceptions and log error with relevant context
+        logging.error(f"Exception while fitting model: {e}")
+        logging.error(f"selector_node: {selector_node.name}")
+        logging.error(f"selector_node.params: {selector_node.params}")
+        logging.error(f"epi_nodes: {len(epi_nodes)}")
+        logging.error(f"Shapes -> X_train: {x_train.shape}, Y_train: {y_train.shape}")
+        return -1.0, 0, 0
 
-    # get the r2 score
-    r2_score = pipeline_fitted.score(x_val, y_val)
-    # get the feature count that made it out of the selector node
-    feature_count = pipeline_fitted.named_steps['selector'].get_feature_count()
+    try:
+        r2_score = pipeline_fitted.score(x_val, y_val)
+        feature_count = pipeline_fitted.named_steps['selector'].get_feature_count()
+    except Exception as e:
+        logging.error(f"Error while scoring or getting feature count: {e}")
+        return -1.0, 0, 0
 
     # return the pipeline
     return np.float32(r2_score), np.uint16(feature_count), pop_id
@@ -347,7 +361,6 @@ class EA:
             parent_ids = self.parent_selection(np.array([[pipeline.get_trait_r2(), pipeline.get_trait_feature_cnt()] for pipeline in self.population], dtype=np.float32), parent_cnt)
 
             # generate offspring
-            # todo: evaluate all unseen offspring pipeline interactions
             offspring = self.repoduction.produce_offspring(rng = self.rng,
                                                            hub = self.hubs,
                                                            offspring_cnt=np.uint16(extra_offspring + self.pop_size),
