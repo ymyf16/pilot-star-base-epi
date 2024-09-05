@@ -32,6 +32,8 @@ snp_t = np.str_
 @typechecked
 class Reproduction:
     def __init__(self,
+                 epi_cnt_max: np.uint16,
+                 epi_cnt_min: np.uint16,
                  mut_prob: prob_t = prob_t(.5),
                  cross_prob: prob_t = prob_t(.5),
                  mut_selector_p: prob_t = prob_t(.5),
@@ -41,9 +43,13 @@ class Reproduction:
                  mut_smt_p: prob_t = prob_t(.45),
                  smt_in_in_p: prob_t = prob_t(.1),
                  smt_in_out_p: prob_t = prob_t(.45),
-                 smt_out_out_p: prob_t = prob_t(.45)) -> None:
+                 smt_out_out_p: prob_t = prob_t(.45),
+                 num_add_interactions: np.uint16 = np.uint16(10),
+                 num_del_interactions: np.uint16 = np.uint16(10)) -> None:
 
         # save all the variables
+        self.epi_cnt_max = epi_cnt_max
+        self.epi_cnt_min = epi_cnt_min
         self.mut_prob = mut_prob
         self.cross_prob = cross_prob
         self.mut_selector_p = mut_selector_p
@@ -54,6 +60,8 @@ class Reproduction:
         self.smt_in_in_p = smt_in_in_p
         self.smt_in_out_p = smt_in_out_p
         self.smt_out_out_p = smt_out_out_p
+        self.num_add_interactions = num_add_interactions
+        self.num_del_interactions = num_del_interactions
 
         return
 
@@ -168,7 +176,7 @@ class Reproduction:
 
     # what mutation are we applying to the pipeline
     def mutate(self,
-               rng: np.random.Generator,
+               rng: rng_t,
                parent: Pipeline,
                hub: GenoHub) -> Pipeline:
 
@@ -181,11 +189,11 @@ class Reproduction:
         # get parent epi pairs
         parent_epi_pairs = cp.deepcopy(parent.get_epi_pairs())
 
-        # print offspring pipeline
-        # print('*'*100)
-        # print("Offspring pipeline before:")
-        # parent.print_pipeline()
-        # print('*'*100)
+        # delete interactions
+        parent_epi_pairs = self.delete_interactions(rng, parent_epi_pairs, hub)
+
+        # get new set of interactions
+        new_interactions_list = self.add_interactions(rng, hub, parent_epi_pairs)
 
         # mutate the offspring
         epi_pairs = set()
@@ -199,14 +207,14 @@ class Reproduction:
                     # smart mutation
                     epi_pairs.add(self.mutate_epi_node_smrt(rng, hub, interaction[0], interaction[1]))
                 else:
-                    # smt mutation
+                    # random mutation
                     epi_pairs.add(self.mutate_epi_node_rand(rng, hub, interaction[0], interaction[1]))
             else:
                 # no mutation
                 epi_pairs.add(interaction)
 
-        # update the epi pairs
-        offspring.set_epi_pairs(epi_pairs)
+        # update the epi pairs + new interactions
+        offspring.set_epi_pairs(epi_pairs.union(new_interactions_list))
 
         # mutate the selector node
         if rng.choice([True, False], p=[self.mut_selector_p, 1.0-self.mut_selector_p]):
@@ -216,13 +224,116 @@ class Reproduction:
         if rng.choice([True, False], p=[self.mut_regressor_p, 1.0-self.mut_regressor_p]):
             offspring.mutate_root_node(rng)
 
-        # print offspring pipeline
-        # print("Offspring pipeline after:")
-        # offspring.print_pipeline()
-        # print('*'*100)
-        # print()
-
         return offspring
+
+    # delete interactions from the pipeline based on 1 - r2 results
+    def delete_interactions(self,
+                            rng: rng_t,
+                            interactions: epi_interactions_t,
+                            hub: GenoHub) -> epi_interactions_t:
+        # quick checks
+        assert len(interactions) - self.epi_cnt_min > 0
+
+        # get a number of interactions to delete based on self.epi_cnt_min
+        num_del_range = np.uint16(max(len(interactions) - self.epi_cnt_min, 0))
+
+        # if nothing to do return interactions
+        if num_del_range == 0:
+            return interactions
+        # if range is 1, delete one interaction
+        elif num_del_range == 1:
+            num_deletions = 1
+        # if the range is greater than self.num_del_interactions
+        elif num_del_range >= self.num_del_interactions:
+            # get a random number between 1 and num_del_range
+            num_deletions = rng.integers(1, self.num_del_interactions)
+        # else pick a number between the range and 1 (range < self.num_del_interactions)
+        else:
+            num_deletions = rng.integers(1, num_del_range)
+
+        # collect all the interactions results
+        r2_results = []
+        for interaction in interactions:
+            assert hub.get_interaction_res(snp1=interaction[0], snp2=interaction[1]) >= 0.0
+            r2_results.append(np.float32(1.0) - hub.get_interaction_res(snp1=interaction[0], snp2=interaction[1]))
+
+        # normalize the results with respect to the sum of r2 results
+        r2_results = np.array(r2_results, dtype=np.float32) / np.sum(r2_results, dtype=np.float32)
+
+        # get a set of interactions to delete
+        del_interactions = rng.choice(list(interactions), num_deletions, p=r2_results, replace=False)
+
+        # convert to sets
+        del_interactions = set([tuple(x) for x in del_interactions])
+
+        # return the interactions without the deleted ones
+        return interactions.difference(del_interactions)
+
+    # return a specific number of interactions to add to the pipeline
+    def add_interactions(self,
+                             rng: rng_t,
+                             hub: GenoHub,
+                             interactions: epi_interactions_t) -> epi_interactions_t:
+        # quick checks
+        assert len(interactions) <= self.epi_cnt_max
+        assert self.epi_cnt_max - len(interactions) >= 0
+
+        # get a number of interactions to add based on self.epi_cnt_max
+        num_add_range = np.uint16(max(self.epi_cnt_max - len(interactions), 0))
+
+        # if nothing to do return interactions
+        if num_add_range == 0:
+            return interactions
+        # if range is 1, add one interaction
+        elif num_add_range == 1:
+            num_additions = 1
+        # if the range is greater than self.num_add_interactions
+        elif num_add_range >= self.num_add_interactions:
+            # get a random number between 1 and num_add_interactions
+            num_additions = rng.integers(1, self.num_add_interactions)
+        # else pick a number between the range and 1 (range < self.num_add_interactions)
+        else:
+            num_additions = rng.integers(1, num_add_range)
+
+        # collect all new snps
+        new_interactions = set()
+        while len(new_interactions) < num_additions:
+            # roll to get the first snp
+            new_snp1_name = None
+
+            # get the first snp smartly or random?
+            if rng.choice([True, False], p=[self.mut_smt_p, 1.0-self.mut_smt_p]):
+                new_snp1_name = hub.get_smt_snp(rng)
+            else:
+                new_snp1_name = hub.get_ran_snp(rng)
+            assert new_snp1_name != None
+
+            # get the second snp
+            new_snp2_name = None
+
+            # if smart snp, get the second snp smartly based on bin and chromosome
+            if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
+                new_snp2_name = self.get_smrt_snp(rng, new_snp1_name, hub)
+            else:
+                # randomly select another SNP
+                new_snp2_name = hub.get_ran_snp(rng)
+
+                # make sure the new snps are different
+                while new_snp2_name == new_snp1_name:
+                    new_snp2_name = hub.get_ran_snp(rng)
+
+            # put the snps in the correct order
+            if new_snp1_name > new_snp2_name:
+                new_snp1_name, new_snp2_name = new_snp2_name, new_snp1_name
+
+            # make sure the new snps are not already in the interactions
+            if (new_snp1_name, new_snp2_name) in interactions:
+                continue
+            else:
+                new_interactions.add((new_snp1_name, new_snp2_name))
+
+        # return the interactions
+        return new_interactions
 
     # execute a smart mutation on the epi_node
     def mutate_epi_node_smrt(self,
@@ -237,19 +348,7 @@ class Reproduction:
         new_snp1_name = rng.choice([snp1_name, snp2_name])
 
         # randomly select one of the mutations to perform
-        mut_fun = rng.choice([0,1,2], p=[self.smt_in_in_p, self.smt_in_out_p, self.smt_out_out_p])
-
-        if mut_fun == 0:
-            # in chromosome and in bin
-            new_snp2_name = hub.get_smt_snp_in_bin(snp=new_snp1_name, rng=rng)
-        elif mut_fun == 1:
-            # in chromosome and out of bin
-            new_snp2_name = hub.get_smt_snp_in_chrm(snp=new_snp1_name, rng=rng)
-        elif mut_fun == 2:
-            # out of chromosome
-            new_snp2_name = hub.get_smt_snp_out_chrm(snp=new_snp1_name, rng=rng)
-        else:
-            exit("Unknown mutation function", -1)
+        new_snp2_name = self.get_smrt_snp(rng, new_snp1_name, hub)
 
         # make sure the new snps are set
         assert new_snp1_name != None and new_snp2_name != None
@@ -258,6 +357,22 @@ class Reproduction:
         if new_snp1_name > new_snp2_name:
             return new_snp2_name, new_snp1_name
         return new_snp1_name, new_snp2_name
+
+    def get_smrt_snp(self, rng: rng_t, snp_name: snp_t, hub: GenoHub) -> snp_t:
+        # randomly select one of the mutations to perform
+        mut_fun = rng.choice([0,1,2], p=[self.smt_in_in_p, self.smt_in_out_p, self.smt_out_out_p])
+
+        if mut_fun == 0:
+            # in chromosome and in bin
+            return hub.get_smt_snp_in_bin(snp=snp_name, rng=rng)
+        elif mut_fun == 1:
+            # in chromosome and out of bin
+            return hub.get_smt_snp_in_chrm(snp=snp_name, rng=rng)
+        elif mut_fun == 2:
+            # out of chromosome
+            return hub.get_smt_snp_out_chrm(snp=snp_name, rng=rng)
+        else:
+            exit("Unknown mutation function", -1)
 
     # execute a random mutation on the epi_node
     def mutate_epi_node_rand(self,

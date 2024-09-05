@@ -173,21 +173,37 @@ class GenoHub:
             assert snp in self.hub
 
             # check if we are updating a snp for the first time
-            if self.hub[snp][self.mapping['cnt']] == np.uint32(0):
+            if self.hub[snp][1] == np.uint32(0):
                 # set the starting value if first time
-                self.hub[snp][self.mapping['sum']] = value
-                self.hub[snp][self.mapping['cnt']] += np.uint32(1)
+                self.hub[snp][0] = value
+                self.hub[snp][1] += np.uint32(1)
                 return
             else:
                 # aggregate current values if not the first time
-                self.hub[snp][self.mapping['sum']] += value
-                self.hub[snp][self.mapping['cnt']] += np.uint32(1)
+                self.hub[snp][0] += value
+                self.hub[snp][1] += np.uint32(1)
                 return
 
         # get all averages for given snps
         def get_all_avgs(self, snps: List[snp_t]) -> npt.NDArray[snp_hub_sum_t]:
             # return all averages for given snps
             return np.array([self.get_snp_avg(snp) for snp in snps], dtype=np.float32)
+
+        # get snp based on r2 weight from all snps in hub with positive r2
+        def get_snp_r2_weighted(self, rng: rng_t) -> snp_t:
+            # get all snps with r2 > 0.0
+            snps = [snp for snp in self.hub.keys() if self.get_snp_avg(snp) > np.float32(0.0)]
+            assert len(snps) > 0
+
+            # get all r2 scores
+            r2 = np.array([self.get_snp_avg(snp) for snp in snps], dtype=np.float32)
+            r2 = r2 / np.sum(r2, dtype=np.float32)
+
+            assert len(snps) == len(r2)
+
+            # get a random snp based on r2 scores as weights
+            return rng.choice(snps, p=r2)
+
 
     class Bin:
         """
@@ -578,27 +594,31 @@ class GenoHub:
         print('SNP Hub Initialized')
 
         # epi hub stuff
-        self.epi = self.EPI()
+        self.epi_hub = self.EPI()
         print('EPI Hub Initialized')
         print()
         return
 
     # get best lo for a given interaction
     def get_interaction_lo(self, snp1: snp_t, snp2: snp_t) -> epi_hub_lo_t:
-        return self.epi.get_interaction_lo(snp1, snp2)
+        return self.epi_hub.get_interaction_lo(snp1, snp2)
 
     # get r2 for a given interaction from the epi hub
     def get_interaction_res(self, snp1: snp_t, snp2: snp_t) -> epi_hub_res_t:
-        return self.epi.get_interaction_res(snp1, snp2)
+        return self.epi_hub.get_interaction_res(snp1, snp2)
 
     # update epistatic hub and snp hub with new interaction and results
     def update_epi_n_snp_hub(self, snp1: snp_t, snp2: snp_t, result: epi_hub_res_t, lo: epi_hub_lo_t) -> None:
-        self.epi.update_hub(snp1, snp2, result, lo)
+        # update epi hub
+        self.epi_hub.update_hub(snp1, snp2, result, lo)
+        # update snp hub with new snps and results
+        self.snp_hub.update_hub(snp1, result)
+        self.snp_hub.update_hub(snp2, result)
         return
 
     # check if interaction is in the epi hub
     def is_interaction_in_hub(self, snp1: snp_t, snp2: snp_t) -> bool:
-        return self.epi.is_interaction_in_hub(snp1, snp2)
+        return self.epi_hub.is_interaction_in_hub(snp1, snp2)
 
     # get snp position from the snp hub
     def get_snp_pos(self, snp: snp_t) -> snp_hub_pos_t:
@@ -721,3 +741,8 @@ class GenoHub:
     def get_ran_snp(self, rng: rng_t) -> snp_t:
         # get random snp
         return self.bin_hub.get_ran_snp(rng)
+
+    # get snp from hub bae on r2 weight
+    def get_smt_snp(self, rng:rng_t):
+        # call snp hub for a random snp based on r2 weight
+        return self.snp_hub.get_snp_r2_weighted(rng)

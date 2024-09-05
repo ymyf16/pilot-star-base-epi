@@ -30,6 +30,8 @@ import nsga_tool as nsga
 import logging
 import warnings
 from sklearn.exceptions import NotFittedError, ConvergenceWarning
+import matplotlib.pyplot as plt
+
 
 # snp name type
 snp_name_t = np.str_
@@ -151,6 +153,7 @@ class EA:
                  seed: np.uint16,
                  pop_size: np.uint16,
                  epi_cnt_max: np.uint16,
+                 epi_cnt_min: np.uint16,
                  cores: int,
                  mut_prob: prob_t = prob_t(.5),
                  cross_prob: prob_t = prob_t(.5),
@@ -161,7 +164,9 @@ class EA:
                  mut_smt_p: prob_t = prob_t(.45),
                  smt_in_in_p: prob_t = prob_t(.1),
                  smt_in_out_p: prob_t = prob_t(.45),
-                 smt_out_out_p: prob_t = prob_t(.45)) -> None:
+                 smt_out_out_p: prob_t = prob_t(.45),
+                 num_add_interactions: np.uint16 = np.uint16(10),
+                 num_del_interactions: np.uint16 = np.uint16(10)) -> None:
         """
         Main class for the evolutionary algorithm.
 
@@ -184,6 +189,14 @@ class EA:
             Probability for smart mutation, new snp comes from the same chromosome but different bin.
         smt_out_out_p: prob_t
             Probability for smart mutation, new snp comes from a different chromosome (different bin by definition).
+        mut_prob: prob_t
+            Probability for mutation ocurring.
+        cross_prob: prob_t
+            Probability for crossover ocurring.
+        num_add_interactions: np.uint16
+            Number of interactions to add within a pipeline.
+        num_del_interactions: np.uint16
+            Number of interactions to delete within a pipeline.
         """
 
         # arguments needed to run
@@ -191,6 +204,7 @@ class EA:
         self.pop_size = pop_size
         self.rng = np.random.default_rng(seed) # random number generator to be passed to all other stocastic functions
         self.epi_cnt_max = epi_cnt_max
+        self.epi_cnt_min = epi_cnt_min
         self.mut_ran_p = mut_ran_p
         self.mut_non_p = mut_non_p
         self.mut_smt_p = mut_smt_p
@@ -199,17 +213,23 @@ class EA:
         self.smt_in_in_p = smt_in_in_p
         self.smt_in_out_p = smt_in_out_p
         self.smt_out_out_p = smt_out_out_p
+        self.num_add_interactions = num_add_interactions
+        self.num_del_interactions = num_del_interactions
         self.population = [] # will hold all the pipelines
-        self.repoduction = Reproduction(mut_prob=mut_prob,
-                                 cross_prob=cross_prob,
-                                 mut_selector_p=mut_selector_p,
-                                 mut_regressor_p=mut_regressor_p,
-                                 mut_ran_p=mut_ran_p,
-                                 mut_non_p=mut_non_p,
-                                 mut_smt_p=mut_smt_p,
-                                 smt_in_in_p=smt_in_in_p,
-                                 smt_in_out_p=smt_in_out_p,
-                                 smt_out_out_p=smt_out_out_p)
+        self.repoduction = Reproduction(epi_cnt_max=epi_cnt_max,
+                                        epi_cnt_min=epi_cnt_min,
+                                        mut_prob=mut_prob,
+                                        cross_prob=cross_prob,
+                                        mut_selector_p=mut_selector_p,
+                                        mut_regressor_p=mut_regressor_p,
+                                        mut_ran_p=mut_ran_p,
+                                        mut_non_p=mut_non_p,
+                                        mut_smt_p=mut_smt_p,
+                                        smt_in_in_p=smt_in_in_p,
+                                        smt_in_out_p=smt_in_out_p,
+                                        smt_out_out_p=smt_out_out_p,
+                                        num_add_interactions=num_add_interactions,
+                                        num_del_interactions=num_del_interactions)
 
         # Initialize Ray: Will have to specify when running on hpc
         context = ray.init(num_cpus=cores, include_dashboard=True)
@@ -355,6 +375,8 @@ class EA:
 
             print('Generation:', g)
 
+            self.plot_pareto_front()
+
             # how many extra pipeline offspring do we need to fill up considered solutions
             extra_offspring = self.pop_size - len(self.population)
             # get order of mutation/crossover to do with the extra offspring
@@ -402,18 +424,20 @@ class EA:
             assert len(self.population) == self.pop_size
 
     # get list of pipeline scores (r2, complexity) by position
-    def get_pipeline_scores(self, pipelines: List[Pipeline]) -> List[Tuple[np.float32, np.uint16]]:
+    def get_pipeline_scores(self, pipelines: List[Pipeline]) -> List[Tuple[np.float32, np.int16]]:
         """
         Function to get the pipeline scores (r2, complexity) by position.
+
+        Need to multiply the feature count by -1 to ensure that we are minimizing the feature count.
         """
-        return [(pipeline.get_trait_r2(), pipeline.get_trait_feature_cnt()) for pipeline in pipelines]
+        return [(pipeline.get_trait_r2(), np.int16(pipeline.get_trait_feature_cnt())) for pipeline in pipelines]
 
     # survival selection
     def survival_selection(self,
                            pop1: List[Pipeline],
-                           pop1_scores: List[Tuple[np.float32, np.uint16]],
+                           pop1_scores: List[Tuple[np.float32, np.int16]],
                            pop2: List[Pipeline],
-                           pop2_scores: List[Tuple[np.float32, np.uint16]]) -> List[Pipeline]:
+                           pop2_scores: List[Tuple[np.float32, np.int16]]) -> List[Pipeline]:
         """
         Function to select the survivors from the current population and offspring.
 
@@ -437,7 +461,7 @@ class EA:
         assert len(all_scores) >= self.pop_size
 
         # get the fronts and rank
-        fronts, _ = nsga.non_dominated_sorting(all_scores)
+        fronts, _ = nsga.non_dominated_sorting(obj_scores=all_scores, weights=np.array([1.0, -1.0], dtype=np.float32))
 
         # get crowding distance for each solution
         crowding_distance = nsga.crowding_distance(all_scores, np.int32(2))
@@ -480,17 +504,12 @@ class EA:
         # we create double the population size to account for bad interactions
         # which are are extremely common given the nature of epistatic interactions
         for _ in range(self.pop_size * 2):
-            # how many epi nodes to create
-            # lower bound will be half of what the user specified
-            # upper bound will be the actual user specified mas
-            epi_cnt = self.rng.integers(int(self.epi_cnt_max * 0.5), self.epi_cnt_max)
-
             # holds all interactions we are doing
             # set to make sure we don't have duplicates
             interactions = set()
 
             # while we have not reached the max number of epi interactions
-            while len(interactions) < epi_cnt:
+            while len(interactions) <= self.epi_cnt_max:
                 # get random snp1 and snp2 and add to interactions
                 snp1, snp2 = self.hubs.get_ran_interaction(self.rng)
                 # add interaction to the set
@@ -524,8 +543,8 @@ class EA:
 
         # evaluate the initial population
         self.evaluation(self.population)
-        scores = self.get_pipeline_scores(self.population)
-        assert len(scores) == len(self.population)
+        # scores = self.get_pipeline_scores(self.population)
+        # assert len(scores) == len(self.population)
 
         # subset the population to only include pipelines with positive r2 scores
         pop = []
@@ -546,7 +565,7 @@ class EA:
         # else we use nsga to get the pareto front from all the pipelines in the population
         else:
             # get the fronts and rank
-            fronts, ranks = nsga.non_dominated_sorting(positive_scores)
+            fronts, ranks = nsga.non_dominated_sorting(obj_scores=positive_scores, weights=np.array([1.0, -1.0], dtype=np.float32))
             # make sure that the number of fronts is correct
             assert sum([len(f) for f in fronts]) == len(ranks)
 
@@ -716,7 +735,7 @@ class EA:
         parent_ids = []
 
         # get the fronts and rank
-        fronts, ranks = nsga.non_dominated_sorting(scores)
+        fronts, ranks = nsga.non_dominated_sorting(obj_scores=scores, weights=np.array([1.0, -1.0], dtype=np.float32))
         # make sure that the number of fronts is correct
         assert sum([len(f) for f in fronts]) == len(ranks)
 
@@ -736,6 +755,7 @@ class EA:
 
         # get unseen interactions
         unseen_interactions = self.get_unseen_interactions(pipelines)
+        # print('processing offspring unseen interactions:', len(unseen_interactions))
 
         # evaluate all unseen interactions
         self.evaluate_unseen_interactions(unseen_interactions)
@@ -774,14 +794,30 @@ class EA:
         # get all scores from the current population
         pop_scores = np.array(self.get_pipeline_scores(self.population), dtype=np.float32)
 
-        # remove scores
+        # get the fronts and rank
+        fronts, rank = nsga.non_dominated_sorting(obj_scores=pop_scores, weights=np.array([1.0, -1.0], dtype=np.float32))
+
+        # remove scores that are not of rank 0
+        pareto_front = pop_scores[rank == 0]
+
+        # plot the pareto front
+        plt.scatter(pareto_front[:, 1], pareto_front[:, 0])
+        plt.xlabel('Feature Count')
+        plt.ylabel('R2 Score')
+
+        # show grid
+        plt.grid(True)
+
+        # show plot
+        plt.show()
 
 
 def main():
     # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
                  'pop_size': np.uint16(100),
-                 'epi_cnt_max': np.uint16(100),
+                 'epi_cnt_max': np.uint16(200),
+                 'epi_cnt_min': np.uint16(10),
                  'cores': 10,
                  'mut_selector_p': np.float64(1.0),
                  'mut_regressor_p': np.float64(.5),
@@ -792,7 +828,9 @@ def main():
                  'smt_in_out_p': np.float64(.450),
                  'smt_out_out_p': np.float64(.450),
                  'mut_prob': np.float64(.5),
-                 'cross_prob': np.float64(.5)}
+                 'cross_prob': np.float64(.5),
+                 'num_add_interactions': np.uint16(10),
+                 'num_del_interactions': np.uint16(10)}
 
     ea = EA(**ea_config)
     # need to update the path to the data file

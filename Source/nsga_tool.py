@@ -11,7 +11,7 @@ from typing import List, Tuple
 import numpy.typing as npt
 
 @typechecked # for debugging purposes
-def non_dominated_sorting(obj_scores: npt.NDArray[np.float32]) -> Tuple[List[npt.NDArray[np.uint16]],npt.NDArray[np.uint16]]:
+def non_dominated_sorting(obj_scores: npt.NDArray[np.float32], weights: npt.NDArray[np.float32]) -> Tuple[List[npt.NDArray[np.uint16]],npt.NDArray[np.uint16]]:
     """
     Perform non-dominated sorting for a maximization problem using NumPy arrays of type float32.
 
@@ -27,6 +27,7 @@ def non_dominated_sorting(obj_scores: npt.NDArray[np.float32]) -> Tuple[List[npt
     # quick check to make sure that elements in scores are numpy arrays with np.float32
     assert all(isinstance(x, np.ndarray) for x in obj_scores)
     assert isinstance(obj_scores[0][0], np.float32)
+    assert all(len(x) == len(weights) for x in obj_scores)
 
     pop_size = obj_scores.shape[0]
     # final fronts returned
@@ -37,6 +38,9 @@ def non_dominated_sorting(obj_scores: npt.NDArray[np.float32]) -> Tuple[List[npt
     domination_count = np.zeros(pop_size, dtype=np.uint16)
     # what 'q' solutions are dominated by 'p' solution
     dominated_solutions = [[] for _ in range(pop_size)]
+
+    # update obj_scores based on weights
+    obj_scores = obj_scores * weights
 
     for p in range(pop_size):
         for q in range(pop_size):
