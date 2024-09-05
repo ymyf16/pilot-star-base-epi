@@ -122,10 +122,10 @@ def ray_eval_pipeline(x_train,
         logging.error(f"selector_node: {selector_node.name}")
         logging.error(f"selector_node.params: {selector_node.params}")
         logging.error(f"epi_nodes: {len(epi_nodes)}")
-        return -1.0, 0, 0
+        return np.float32(-1.0), np.uint16(0), pop_id
     except NotFittedError as nfe:
         logging.error(f"NotFittedError occurred: {nfe}")
-        return -1.0, 0, 0
+        return np.float32(-1.0), np.uint16(0), pop_id
     except Exception as e:
         # Catch all other exceptions and log error with relevant context
         logging.error(f"Exception while fitting model: {e}")
@@ -133,14 +133,14 @@ def ray_eval_pipeline(x_train,
         logging.error(f"selector_node.params: {selector_node.params}")
         logging.error(f"epi_nodes: {len(epi_nodes)}")
         logging.error(f"Shapes -> X_train: {x_train.shape}, Y_train: {y_train.shape}")
-        return -1.0, 0, 0
+        return np.float32(-1.0), np.uint16(0), pop_id
 
     try:
         r2_score = pipeline_fitted.score(x_val, y_val)
         feature_count = pipeline_fitted.named_steps['selector'].get_feature_count()
     except Exception as e:
         logging.error(f"Error while scoring or getting feature count: {e}")
-        return -1.0, 0, 0
+        return np.float32(-1.0), np.uint16(0), pop_id
 
     # return the pipeline
     return np.float32(r2_score), np.uint16(feature_count), pop_id
@@ -231,7 +231,7 @@ class EA:
         """
 
         print('Loading data...')
-
+        print('Path:', path)
 
         # check if the path is valid
         if os.path.isfile(path) == False:
@@ -277,11 +277,13 @@ class EA:
 
         print('X_train.shape:', self.X_train.shape)
         print('y_train.shape:', self.y_train.shape)
+        print()
         print('X_val.shape:', self.X_val.shape)
         print('y_val.shape:', self.y_val.shape)
         print()
-
         print('Data loaded successfully.')
+        print()
+        return
 
     # data checker to check for validity of dataset
     def check_dataset(self, features, target):
@@ -375,52 +377,67 @@ class EA:
             offspring = self.process_offspring(offspring)
 
             # evaluate the offspring
-            offspring_scores = self.evaluation(offspring)
+            self.evaluation(offspring)
+
+            # subset the population to only include pipelines with positive r2 scores
+            off = []
+            for pipeline in offspring:
+                if pipeline.get_trait_r2() > 0.0:
+                    off.append(pipeline)
+            offspring = off
+
+            offspring_scores = self.get_pipeline_scores(offspring)
             assert(len(offspring_scores) == len(offspring))
 
-            # update offspring with scores
-            for score, pipeline in zip(offspring_scores, offspring):
-                pipeline.set_traits([score[0], np.uint16(score[1])])
-
             # make sure the correct number of solutions are competing prior to negative r2 filtering
-            assert len(offspring_scores) + len(self.population) == 2 * self.pop_size
+            assert len(offspring_scores) + len(self.population) <= 2 * self.pop_size
 
             # survival selection
-            self.population = self.survival_selection(self.population, offspring, offspring_scores)
+            self.population = self.survival_selection(self.population,
+                                                      self.get_pipeline_scores(self.population),
+                                                      offspring,
+                                                      offspring_scores)
 
             # make sure we have the correct number of pipelines
             assert len(self.population) == self.pop_size
 
+    # get list of pipeline scores (r2, complexity) by position
+    def get_pipeline_scores(self, pipelines: List[Pipeline]) -> List[Tuple[np.float32, np.uint16]]:
+        """
+        Function to get the pipeline scores (r2, complexity) by position.
+        """
+        return [(pipeline.get_trait_r2(), pipeline.get_trait_feature_cnt()) for pipeline in pipelines]
+
     # survival selection
     def survival_selection(self,
-                           current_pop: List[Pipeline],
-                           offspring: List[Pipeline],
-                           offspring_scores: List[Tuple[np.float32, np.uint16, np.int16]]) -> List[Pipeline]:
+                           pop1: List[Pipeline],
+                           pop1_scores: List[Tuple[np.float32, np.uint16]],
+                           pop2: List[Pipeline],
+                           pop2_scores: List[Tuple[np.float32, np.uint16]]) -> List[Pipeline]:
         """
         Function to select the survivors from the current population and offspring.
 
         Parameters:
-        current_pop: List[Pipeline]
-            Current population of pipelines.
-        offspring: List[Pipeline]
-            Offspring population of pipelines.
+        pop1: List[Pipeline]
+            First list of pipelines
+        pop1_scores: List[Tuple[np.float32, np.uint16]]
+            First list of pipeline scores
+        pop2: List[Pipeline]
+            Second list of pipelines
+        pop2_scores: List[Tuple[np.float32, np.uint16]]
+            Second list of pipeline scores
         """
-        # subset the offspring to only include pipelines with positive r2 scores
-        offspring = [offspring[offspring_scores[i][2]] for i in range(len(offspring_scores)) if offspring_scores[i][0] > 0.0]
-        # subset the scores to only include pipelines with positive r2 scores: [(r2, complexity),...]
-        positive_offspring_scores = [(offspring_scores[i][0], offspring_scores[i][1]) for i in range(len(offspring_scores)) if offspring_scores[i][0] > 0.0]
-        # get all scores from the current population
-        population_scores = [(pipeline.get_trait_r2(), pipeline.get_trait_feature_cnt()) for pipeline in self.population]
         # make sure all population scores are positive
-        assert all(pipeline.get_trait_r2() > 0.0 for pipeline in self.population)
+        assert all(pipeline.get_trait_r2() > 0.0 for pipeline in pop1)
+        assert all(pipeline.get_trait_r2() > 0.0 for pipeline in pop2)
 
         # combine both the population and offspring scores
-        all_scores = np.array(np.concatenate((population_scores, positive_offspring_scores), axis=0), dtype=np.float32)
-        assert len(all_scores) == len(self.population) + len(positive_offspring_scores)
+        all_scores = np.array(np.concatenate((pop1_scores, pop2_scores), axis=0), dtype=np.float32)
+        assert len(all_scores) == len(pop1) + len(pop2)
         assert len(all_scores) >= self.pop_size
 
         # get the fronts and rank
-        fronts, ranks = nsga.non_dominated_sorting(all_scores)
+        fronts, _ = nsga.non_dominated_sorting(all_scores)
 
         # get crowding distance for each solution
         crowding_distance = nsga.crowding_distance(all_scores, np.int32(2))
@@ -431,7 +448,7 @@ class EA:
         assert len(survivor_ids) == self.pop_size
 
         # combine the population and offspring
-        candidates = self.population + offspring
+        candidates = pop1 + pop2
 
         # subset the candidates to only include the survivors
         new_pop = []
@@ -506,18 +523,22 @@ class EA:
         assert len(self.population) ==  2 * self.pop_size
 
         # evaluate the initial population
-        scores =  self.evaluation(self.population)
+        self.evaluation(self.population)
+        scores = self.get_pipeline_scores(self.population)
+        assert len(scores) == len(self.population)
 
         # subset the population to only include pipelines with positive r2 scores
-        self.population = [self.population[scores[i][2]] for i in range(len(scores)) if scores[i][0] > 0.0]
-        # subset the scores to only include pipelines with positive r2 scores: [(r2, complexity),...]
-        positive_scores = np.array([(scores[i][0], scores[i][1]) for i in range(len(scores)) if scores[i][0] > 0.0], dtype=np.float32)
+        pop = []
+        for pipeline in self.population:
+            if pipeline.get_trait_r2() > 0.0:
+                pop.append(pipeline)
+        self.population = pop
+
+        # get scores from the trimmed population
+        positive_scores = self.get_pipeline_scores(self.population)
+
         # make sure that the size of scores matches the population size
         assert len(positive_scores) == len(self.population)
-
-        # assign traits to each pipeline
-        for score, pipeline in zip(positive_scores, self.population):
-            pipeline.set_traits([score[0], np.uint16(score[1])])
 
         # if size positive_scores is less than the population size, we keep the same population
         if len(positive_scores) < self.pop_size:
@@ -542,6 +563,8 @@ class EA:
         """
         Function to evaluate all unseen interactions.
         We will evaluate all unseen interactions and add them to the GenoHub.
+        All of this is done in asyncronous parallel jobs.
+        We update the GenoHub with the results as they come in.
 
         Parameters:
         unseen_interactions: Set[Tuple]
@@ -560,15 +583,12 @@ class EA:
                                                 snp2_name = snp2_name,
                                                 snp1_pos = self.hubs.get_snp_pos(snp1_name),
                                                 snp2_pos = self.hubs.get_snp_pos(snp2_name)))
-        # run all ray jobs
-        ray_results = ray.get(ray_jobs)
+        assert len(ray_jobs) == len(unseen_interactions)
 
-        # make sure we have the correct number of results
-        assert len(ray_results) == len(unseen_interactions)
-
-        # add all results to the GenoHub
-        for r in ray_results:
-            r2, lo, snp1_name, snp2_name = r
+        # process results as they come in
+        while len(ray_jobs) > 0:
+            finished, ray_jobs = ray.wait(ray_jobs)
+            r2, lo, snp1_name, snp2_name = ray.get(finished)[0]
             self.hubs.update_epi_n_snp_hub(snp1_name, snp2_name, r2, lo)
 
     # remove bad interactions for a given set of interactions
@@ -601,7 +621,18 @@ class EA:
             p.print_pipeline()
 
     # evaluate the population                                   # r2 , feature count, pop_id
-    def evaluation(self, pop: List[Pipeline]) -> List[Tuple[np.float32, np.uint16, np.int16]]:
+    def evaluation(self, pop: List[Pipeline]) -> None:
+        """
+        Function to evaluate entire pipelines.
+        We will evaluate all unseen interactions and add them to the GenoHub.
+        All of this is done in asyncronous parallel jobs.
+        We update the GenoHub with the results as they come in.
+
+        Parameters:
+        unseen_interactions: Set[Tuple]
+            Set of unseen interactions to evaluate.
+        """
+
         # collect all parallel jobs
         ray_jobs = []
         # go through each pipeline in the population and evaluate
@@ -615,10 +646,15 @@ class EA:
                                                      pipeline.get_selector_node(),
                                                      pipeline.get_root_node(),
                                                      np.int16(i)))
-        # run all ray jobs
-        results = ray.get(ray_jobs)
+        assert len(ray_jobs) == len(pop)
 
-        return results
+        # process results as they come in
+        while len(ray_jobs) > 0:
+            finished, ray_jobs = ray.wait(ray_jobs)
+            r2, feature_count, pop_id = ray.get(finished)[0]
+            # update the pipeline
+            pop[pop_id].set_traits([r2, feature_count])
+        return
 
     # construct epi_nodes for a pipeline's set of epi_pairs
     def construct_epi_nodes(self, epi_pairs: Set[Tuple[snp_name_t,snp_name_t]]) -> epi_node_list_t:
@@ -729,11 +765,23 @@ class EA:
 
         return unseen_interactions
 
+    # plot the current pareto front from the population with complexity and r2 scores
+    def plot_pareto_front(self) -> None:
+        """
+        Function to plot the current pareto front from the population with complexity and r2 scores.
+        """
+
+        # get all scores from the current population
+        pop_scores = np.array(self.get_pipeline_scores(self.population), dtype=np.float32)
+
+        # remove scores
+
+
 def main():
     # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
-                 'pop_size': np.uint16(300),
-                 'epi_cnt_max': np.uint16(300),
+                 'pop_size': np.uint16(100),
+                 'epi_cnt_max': np.uint16(100),
                  'cores': 10,
                  'mut_selector_p': np.float64(1.0),
                  'mut_regressor_p': np.float64(.5),

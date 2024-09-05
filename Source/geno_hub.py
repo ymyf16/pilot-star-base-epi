@@ -556,6 +556,9 @@ class GenoHub:
 
     # initialize all hubs
     def __init__(self, snps: gen_header_snps_t, bin_size: bin_hub_size_t) -> None:
+
+        # bin_size: base pairs per bin
+
         # bin hub stuff
         print('Initializing GenoHub')
         self.bin_hub = self.Bin()
