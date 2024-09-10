@@ -515,13 +515,11 @@ class EA:
                 # add interaction to the set
                 interactions.add((snp1, snp2))
 
-                # check if we have seen this interaction before
-                if self.hubs.is_interaction_in_hub(snp1, snp2) == False:
-                    unseen_interactions.add((snp1, snp2))
-
+            new_unseen = set(interaction for interaction in interactions 
+                            if not self.hubs.is_interaction_in_hub(*interaction))
+            unseen_interactions.update(new_unseen)
             # add to the population
             pop_epi_interactions.append(interactions)
-
         # make sure we have the correct number of interactions
         assert len(pop_epi_interactions) == 2 * self.pop_size
 
