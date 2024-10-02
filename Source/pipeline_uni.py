@@ -12,6 +12,7 @@ import copy as cp
 # numpy random number generator type
 gen_rng_t = np.random.Generator
 gen_snp_arr_t = npt.NDArray[np.str_]
+uni_t = Set
 epi_pairs_t = Set[Tuple]
 traits_t = List
 
@@ -19,12 +20,15 @@ traits_t = List
 class Pipeline:
     def __init__(self,
                  epi_pairs: epi_pairs_t,
+                 uni_snps: uni_t, #YF added univariate part
                  selector_node: ScikitNode,
                  root_node: ScikitNode,
                  traits: traits_t) -> None:
 
+        ##YF
         # need to make a deep copy to keep independent
         self.epi_pairs = cp.deepcopy(epi_pairs) # will contain the interacting_features
+        self.uni_snps = cp.deepcopy(uni_snps) # will contain individual snps
         self.traits = cp.deepcopy(traits) # will contain the r2 (traits[0]) and feature_cnt (traits[1])
         self.selector_node = cp.deepcopy(selector_node) # will contain the selector node
         self.root_node = cp.deepcopy(root_node) # will contain the regressor node
@@ -64,6 +68,10 @@ class Pipeline:
 
     def get_epi_pairs(self) -> Set[Tuple]:
         return self.epi_pairs
+    
+    #YF
+    def get_uni_snps(self) -> Set:
+        return self.uni_snps
 
     # method to get the number of nodes in the pipeline
     def get_branch_count(self):
@@ -81,9 +89,13 @@ class Pipeline:
     def get_root_node(self):
         return self.root_node
 
-    # print the pipeline
+    ##YF print the pipeline
     def print_pipeline(self) -> None:
         print("Pipeline:")
+        print("UniNodes:")
+        print('len(self.uni_snps):', len(self.uni_snps))
+        for uni_node in self.uni:
+            print(uni_node)
         print("EpiNodes:")
         print('len(self.epi_pairs):', len(self.epi_pairs))
         for epi_node in self.epi_pairs:

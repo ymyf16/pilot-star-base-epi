@@ -12,19 +12,23 @@ from typing import List
 import pandas as pd
 import os
 import ray
-from pipeline import Pipeline
+from Source.pipeline_uni import Pipeline
 # import nsga_toolbox as nsga
 from sklearn.model_selection import train_test_split
 import time
-from geno_hub import GenoHub
+from Source.geno_hub_uni import GenoHub
 from typing import List, Tuple, Dict, Set
 from epi_node import EpiNode
 from epi_node import EpiCartesianNode, EpiXORNode, EpiPAGERNode, EpiRRNode, EpiRDNode, EpiTNode, EpiModNode, EpiDDNode, EpiM78Node, EpiNode
+
+from uni_node import UniNode
+from uni_node import UniDominantNode, UniRecessiveNode, UniHeterosisNode, UniUnderDominantNode, UniSubadditiveNode, UniSuperadditiveNode, UniPAGERNode
+
 from scikit_node import ScikitNode
 from sklearn.pipeline import Pipeline as SklearnPipeline
 from sklearn.pipeline import FeatureUnion
 from sklearn.linear_model import LinearRegression
-from reproduction import Reproduction
+from reproduction_uni import Reproduction
 import numpy.typing as npt
 import nsga_tool as nsga
 import logging
@@ -39,6 +43,8 @@ snp_name_t = np.str_
 snp_hub_pos_t = np.uint32
 # epi node list type
 epi_node_list_t = List[EpiNode]
+#YF uni node list type
+uni_node_list_t = List[UniNode]
 # probability type: needed to avoid rounding errors with probabilities
 prob_t = np.float64
 
@@ -93,12 +99,14 @@ def ray_lo_eval(x_train,
 
     return np.float32(best_res), np.str_(best_epi), snp1_name, snp2_name
 
+#YF? Same feature union or separate ones?
 @ray.remote
 def ray_eval_pipeline(x_train,
                       y_train,
                       x_val,
                       y_val,
                       epi_nodes: epi_node_list_t,
+                      uni_nodes: uni_node_list_t,
                       selector_node: ScikitNode,
                       root_node: ScikitNode,
                       pop_id: np.int16) -> Tuple[np.float32, np.uint16, np.int16]:
@@ -106,6 +114,8 @@ def ray_eval_pipeline(x_train,
     steps = []
     # combine the epi nodes into a sklearn union
     steps.append(('epi_union', FeatureUnion([(epi_node.name, epi_node) for epi_node in epi_nodes])))
+    # combine the uni nodes into a sklearn union
+    steps.append(('uni_union', FeatureUnion([(uni_node.name, uni_node) for uni_node in uni_nodes])))
     # add the selector node
     steps.append(('selector', selector_node))
     # add the root node
@@ -147,6 +157,56 @@ def ray_eval_pipeline(x_train,
     # return the pipeline
     return np.float32(r2_score), np.uint16(feature_count), pop_id
 
+####YF
+@ray.remote
+def ray_uni_eval(x_train,
+                y_train,
+                x_val,
+                y_val,
+                snp_name: snp_name_t,
+                snp_pos: snp_hub_pos_t) -> Tuple[np.float32, np.str_, np.str_]:
+    # hold results
+    best_uni = ''
+    best_res = -1.0
+
+    # holds all lo's we are going to evaluate
+    unis = {np.str_('dominant'): UniDominantNode,
+            np.str_('recessive'): UniRecessiveNode,
+            np.str_('heterosis'): UniHeterosisNode,
+            np.str_('underdominant'): UniUnderDominantNode,
+            np.str_('subadd'): UniSubadditiveNode,
+            np.str_('superadd'): UniSuperadditiveNode,
+            np.str_('pager'): UniPAGERNode,
+            }
+
+    # iterate over the uni node types and create sklearn pipeline
+    for lo, uni in unis.items():
+        steps = []
+        # create the epi node
+        uni_node = uni(name=lo, snp_name=snp_name, snp_pos=snp_pos)
+        steps.append((lo, uni_node))
+
+        # add random forrest regressor
+        steps.append(('regressor', LinearRegression()))
+
+        # create the pipeline
+        skl_pipeline = SklearnPipeline(steps=steps)
+
+        # Fit the pipeline
+        skl_pipeline_fitted = skl_pipeline.fit(x_train, y_train)
+
+        # get score
+        r2 = skl_pipeline_fitted.score(x_val, y_val)
+
+        # check if this is the best lo
+        if r2 > best_res:
+            best_res = r2
+            best_uni = lo
+
+    return np.float32(best_res), np.str_(best_uni), snp_name
+
+    
+
 @typechecked # for debugging purposes
 class EA:
     def __init__(self,
@@ -154,6 +214,8 @@ class EA:
                  pop_size: np.uint16,
                  epi_cnt_max: np.uint16,
                  epi_cnt_min: np.uint16,
+                 uni_cnt_max: np.uint16,
+                 uni_cnt_min: np.uint16,
                  cores: int,
                  mut_prob: prob_t = prob_t(.5),
                  cross_prob: prob_t = prob_t(.5),
@@ -168,7 +230,7 @@ class EA:
                  num_add_interactions: np.uint16 = np.uint16(10),
                  num_del_interactions: np.uint16 = np.uint16(10)) -> None:
         """
-        Main class for the evolutionary algorithm.
+        Main class for the evolutionary algorithm of .
 
         Parameters:
         seed: np.uint16
@@ -177,6 +239,11 @@ class EA:
             Population size.
         epi_cnt_max: np.uint16
             Maximum number of epistatic interactions (nodes).
+
+        #YF
+        uni_cnt_max: np.uint16
+            Maximum number of univariate snps (nodes).
+
         mut_ran_p: prob_t
             Probability for random mutation.
         mut_smt_p: prob_t
@@ -205,6 +272,11 @@ class EA:
         self.rng = np.random.default_rng(seed) # random number generator to be passed to all other stocastic functions
         self.epi_cnt_max = epi_cnt_max
         self.epi_cnt_min = epi_cnt_min
+
+        #YF added arguments for uni
+        self.uni_cnt_max = uni_cnt_max
+        self.uni_cnt_min = uni_cnt_min
+
         self.mut_ran_p = mut_ran_p
         self.mut_non_p = mut_non_p
         self.mut_smt_p = mut_smt_p
@@ -484,12 +556,14 @@ class EA:
 
         return new_pop
 
+    ##YF
     # initialize the starting population
     def initialize_population(self) -> None:
         """
-        Initialize the population of pipelines with their set of epistatic interactions.
+        Initialize the population of pipelines with their set of epistatic interactions and univariate snps.
         We start by creating (2 * pop_size) random set of interactions and find their best lo from the 9 we use.
-        After, we remove bad interactions (negative r2) for a given set and create pipelines from the good interactions.
+        We will also create (2 * pop_size) random snps and find their best encoder type and r2.
+        After, we remove bad interactions and snps (negative r2) for a given set and create pipelines from the good interactions and snps.
         We then evaluate the pipelines and keep only the pipelines with positive r2 scores.
 
         If the number of pipelines with positive r2 scores is less than the population size, we keep the same population.
@@ -500,6 +574,14 @@ class EA:
         # will hold the unseen interactions -- interactions not found in the Genohub
         unseen_interactions = set()
 
+        #YF 
+        # will hold snps for each pipeline in the population
+        pop_uni = []
+        # will hold unseen snps -- snps whose best encoder type is empty
+        unseen_snps = set() # to avoid duplicates
+
+
+
         # create the initial population
         # we create double the population size to account for bad interactions
         # which are are extremely common given the nature of epistatic interactions
@@ -507,6 +589,7 @@ class EA:
             # holds all interactions we are doing
             # set to make sure we don't have duplicates
             interactions = set()
+            snps = set()
 
             # while we have not reached the max number of epi interactions
             while len(interactions) <= self.epi_cnt_max:
@@ -520,21 +603,43 @@ class EA:
             unseen_interactions.update(new_unseen)
             # add to the population
             pop_epi_interactions.append(interactions)
+
+            # while haven't reached the max number of uni snps
+            while len(snps) <= self.uni_cnt_max:
+                # get random snp and add to snps
+                snp = self.hubs.get_ran_snp(self.rng)
+                # add snp to the snps set
+                snps.add(snp)
+
+            new_snp = set(snp for snp in snps 
+                            if not self.hubs.is_encoder_in_hub(snp))
+            unseen_snps.update(new_snp)
+            # add to the population
+            pop_uni.append(snps)
+
+
+
         # make sure we have the correct number of interactions
         assert len(pop_epi_interactions) == 2 * self.pop_size
+        assert len(pop_uni) == 2 * self.pop_size #YF? Is this what we want?
 
         # evaluate all unseen interactions
         self.evaluate_unseen_interactions(unseen_interactions)
+        self.evaluate_unseen_snps(unseen_snps)
 
-        # remove bad interactions for each pipeline's set of interactions
-        for interactions in pop_epi_interactions:
+        ##YF? remove bad interactions for each pipeline's set of interactions and snps together 
+        #NOT SURE IF ZIP() IS THE MOST IDEAL WAY
+        for snps, interactions in zip(pop_uni, pop_epi_interactions):
+            good_snps = self.remove_bad_snps(snps)
             good_interactions = self.remove_bad_interactions(interactions)
 
-            # make sure we have the correct number of good interactions
+            # make sure we have the correct number of good interactions and snps
+            assert len(good_snps) <= len(snps)
             assert len(good_interactions) <= len(interactions)
 
             # create pipeline and add to the population
-            self.population.append(self.repoduction.generate_random_pipeline(self.rng, good_interactions, int(self.seed)))
+            self.population.append(self.repoduction.generate_random_pipeline(self.rng, good_snps, good_interactions, int(self.seed)))
+
 
         # make sure we have the correct number of pipelines
         assert len(self.population) ==  2 * self.pop_size
@@ -608,6 +713,35 @@ class EA:
             r2, lo, snp1_name, snp2_name = ray.get(finished)[0]
             self.hubs.update_epi_n_snp_hub(snp1_name, snp2_name, r2, lo)
 
+    ##YF? evaluate all unevaluated snps and update 
+    def evaluate_unseen_snps(self, unseen_snps: Set) -> None:
+        """
+        Function to evaluate all unseen snps and add their best R2 and Encoder type to the GenoHub.
+        All of this should be done in asyncronous parallel jobs.
+        We update the GenoHub with the results as they come in.
+
+        Parameters:
+        unseen_snps: Set
+            Unseen snps in a set to evaluate.
+        """
+        ray_jobs = []
+        # collect all ray jobs for evaluation
+        for snp_name in unseen_snps:
+            ray_jobs.append(ray_uni_eval.remote(x_train = self.X_train_id,
+                                                y_train = self.y_train_id,
+                                                x_val = self.X_val_id,
+                                                y_val = self.y_val_id,
+                                                snp_name = snp_name,
+                                                snp_pos = self.hubs.get_snp_pos(snp_name) ))
+        assert len(ray_jobs) == len(unseen_snps)
+
+        # process results as they come in
+        while len(ray_jobs) > 0:
+            finished, ray_jobs = ray.wait(ray_jobs)
+            r2, type, snp_name = ray.get(finished)[0]
+            self.hubs.update_snp_uni_hub(snp_name, r2, type)
+    
+
     # remove bad interactions for a given set of interactions
     def remove_bad_interactions(self, interactions: Set[Tuple[snp_name_t,snp_name_t]]) -> Set[Tuple[snp_name_t,snp_name_t]]:
         """
@@ -627,6 +761,23 @@ class EA:
 
         # return the good interactions
         return good_interactions
+    
+    #YF
+    def remove_bad_snps(self, snps: Set) -> Set:
+        """
+        Function to remove bad snps with r2<0 for a given set of snps
+
+        Parameters:
+        snps: Set of snps 
+        """
+        good_snps = set()
+        for snp_name in snps:
+            # check if r2 is positive
+            if self.hubs.get_uni_res(snp_name) > np.float32(0.0):
+                # add to good snps
+                good_snps.add(snp_name)
+        # return the good snps
+        return good_snps
 
     # print the population
     def print_population(self) -> None:
@@ -637,17 +788,18 @@ class EA:
         for p in self.population:
             p.print_pipeline()
 
+
+    #YF
     # evaluate the population                                   # r2 , feature count, pop_id
     def evaluation(self, pop: List[Pipeline]) -> None:
         """
-        Function to evaluate entire pipelines.
-        We will evaluate all unseen interactions and add them to the GenoHub.
-        All of this is done in asyncronous parallel jobs.
-        We update the GenoHub with the results as they come in.
-
+        #YF edited
+        Function to evaluate entire pipelines after upating all unseen interactions and snps to the GenoHub.
+        So the evaluation here only calls GenoHub to get required positions and values since the lo and type for interactions and snps are already pre-determined. 
+        
         Parameters:
-        unseen_interactions: Set[Tuple]
-            Set of unseen interactions to evaluate.
+        pop: List[Pipeline]
+            List of Sklearn pipelines constructed in the EA process. 
         """
 
         # collect all parallel jobs
@@ -660,6 +812,7 @@ class EA:
                                                      self.X_val_id,
                                                      self.y_val_id,
                                                      self.construct_epi_nodes(pipeline.get_epi_pairs()),
+                                                     self.construct_uni_nodes(pipeline.get_uni_snps()),
                                                      pipeline.get_selector_node(),
                                                      pipeline.get_root_node(),
                                                      np.int16(i)))
@@ -715,6 +868,45 @@ class EA:
             id += 1
         # return the list of epi nodes
         return epi_nodes
+    
+    #YF
+    # construct uni_nodes for a pipeline's set of individual snps
+    def construct_uni_nodes(self, uni_snps: Set) -> uni_node_list_t:
+        """
+        Function to construct uni nodes for a pipeline's set of univariates.
+
+        Parameters:
+        uni_snps: Set
+            Set of snps.
+        """
+        uni_nodes = []
+        id = 0
+        for snp_name in uni_snps:
+            # get the uni snp type
+            uni_type = self.hubs.get_uni_type(snp_name)
+            # get each snps position in the hub
+            snp_pos = self.hubs.get_snp_pos(snp_name)
+
+            if uni_type == np.str_('dominant'):
+                uni_nodes.append(UniDominantNode(name=f"UniDominantNode_{id}", snp_name=snp_name, snp_pos=snp_pos))
+            elif uni_type == np.str_('recessive'):
+                uni_nodes.append(UniRecessiveNode(name=f"UniRecessiveNode_{id}", snp_name=snp_name, snp_pos=snp_pos))
+            elif uni_type == np.str_('heterosis'):
+                uni_nodes.append(UniHeterosisNode(name=f"UniHeterosisNode_{id}", snp_name=snp_name, snp_pos=snp_pos))
+            elif uni_type == np.str_('underdominant'):
+                uni_nodes.append(UniUnderDominantNode(name=f"UniUnderDominantNode_{id}", snp_name=snp_name, snp_pos=snp_pos))
+            elif uni_type == np.str_('subadd'):
+                uni_nodes.append(UniSubadditiveNode(name=f"UniSubadditiveNode_{id}", snp_name=snp_name, snp_pos=snp_pos))
+            elif uni_type == np.str_('superadd'):
+                uni_nodes.append(UniSuperadditiveNode(name=f"UniSuperadditiveNode_{id}", snp_name=snp_name, snp_pos=snp_pos))
+            elif uni_type == np.str_('pager'):
+                uni_nodes.append(UniPAGERNode(name=f"UniPAGERNode_{id}", snp_name=snp_name, snp_pos=snp_pos))
+            else:
+                exit('Error: The univariate snp type is not valid. Please provide a valid type.', -1)
+
+            id += 1
+        # return the list of epi nodes
+        return uni_nodes
 
     # parent selection
     def parent_selection(self, scores: npt.NDArray[np.float32],

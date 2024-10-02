@@ -35,6 +35,13 @@ snp_hub_cnt_t = np.uint32
 # header position
 snp_hub_pos_t = np.uint32
 
+##YF
+# best individual r2 value type
+snp_hub_res_t = np.float32 
+# best encoder type (in str)
+snp_hub_typ_t = np.str_
+
+
 ### Bin Hub Types
 
 # type of object inside bins
@@ -48,6 +55,8 @@ bin_hub_size_t = np.uint16
 epi_hub_res_t = np.float32
 # type of logical operator being stored
 epi_hub_lo_t = np.str_
+
+
 
 
 @typechecked
@@ -64,7 +73,7 @@ class GenoHub:
         """
         def __init__(self):
             """
-            self.hub: dictionary to hold all snp and values
+            self.hub: dictionary to hold all snp, values from epi, and values from uni 
             assuming that all snps are already in the hub
             if we get a snp that is not in the hub, we throw an error in debug mode
 
@@ -72,6 +81,10 @@ class GenoHub:
             cnt_pos = 1 # position for count variable in hub value list
             bin_pos = 2 # position for bin number in hub value list
             pos_pos = 3 # position for header position in hub value list
+
+            ##YF
+            res_pos = 4 # position for the best r2 result among all encoder types in hub value list
+            typ_pos = 5 # position for the corresponding encoder types in hub value list
             """
 
             self.hub = {} # {snp: [sum(np.float32), cnt(np.uint32), bin_pos()], ...}
@@ -104,13 +117,17 @@ class GenoHub:
                 print(f"{k}: avg={self.get_snp_avg(k):.2f} sum={v[0]:.2f} cnt={v[1]:.2f} bin={v[2]} pos={v[3]}")
             return
 
-        # will add snp, sum, cnt, bin, and pos to the hub
+        ##YF
+        # will add snp, sum, cnt, bin, and pos to the hub, along with the addition of best r2 result and best encoder type initialization
         def add_to_hub(self,
                        snp: snp_t,
                        sum: snp_hub_sum_t,
                        cnt: snp_hub_cnt_t,
                        bin: snp_hub_bin_t,
-                       pos: snp_hub_pos_t) -> None:
+                       pos: snp_hub_pos_t,
+                       res: snp_hub_res_t = -1, # Initialize best result as -1
+                       typ: snp_hub_typ_t = np.str_('') # Initialize encoder type as empty np string
+                       ) -> None: 
             """
             will take in a snp, sum, cnt, bin, and pos and add it to the hub
 
@@ -120,11 +137,12 @@ class GenoHub:
                 cnt (snp_hub_cnt_t): count of how many times the snp has been updated
                 bin (snp_hub_bin_t): bin number of the snp relative to the bin hub
                 pos (snp_hub_pos_t): position of the snp in the csv header
+
+                res (snp_hub_res_t): best r2 result placeholder
+                typ (snp_hub_typ_t): best encoder type placeholder                
             """
-
-
             # add to hub
-            self.hub[snp] = [sum, cnt, bin, pos]
+            self.hub[snp] = [sum, cnt, bin, pos, res, typ]
             return
 
         # get snp sum
@@ -183,6 +201,42 @@ class GenoHub:
                 self.hub[snp][0] += value
                 self.hub[snp][1] += np.uint32(1)
                 return
+            
+        ##YF update the best r2 value and corresopnding encoder type as the last two indices of the hub
+        def update_hub_uni(self, snp:snp_t, result:np.float32, type:np.str_) -> None:
+            # assert that snp is in hub
+            assert snp in self.hub
+            # check if the result is better than the one being stored
+            if result >= self.hub[snp][4]:
+                self.hub[snp][4] = result
+                self.hub[snp][5] = type
+                return
+            else:
+                #don't update if the result is not better
+                return
+            
+        ##YF check if the snp has its best encoder type found
+        def is_encoder_in_hub(self, snp:snp_t) -> bool:
+            assert snp in self.hub
+            # check if the best encoder type of snp has been found out
+            return self.hub[snp][5].size > 0
+        
+        ##YF 
+        # get snp result r^2
+        def get_uni_res(self, snp: snp_t) -> snp_hub_res_t:
+            # check for snp existence
+            assert snp in self.hub
+            # return data
+            return self.hub[snp][4]
+        
+        #YF
+        # get snp encoder type
+        def get_uni_type(self, snp: snp_t) -> snp_hub_typ_t:
+            # check snp exists in the hub
+            assert snp in self.hub
+            # return the type 
+            return self.hub[snp][5]
+
 
         # get all averages for given snps
         def get_all_avgs(self, snps: List[snp_t]) -> npt.NDArray[snp_hub_sum_t]:
@@ -472,6 +526,8 @@ class GenoHub:
 
             # return a random snp
             return snp_t(f"{c}.{pos}")
+        
+
 
     class EPI:
         """
@@ -526,6 +582,7 @@ class GenoHub:
 
             # return data
             return self.hub[(snp1, snp2)][1]
+        
 
         # return unseen interactions in the hub from a given list of interactions
         def unseen_interactions(self, snps: npt.NDArray[snp_t]) -> npt.NDArray[snp_t]:
@@ -602,10 +659,19 @@ class GenoHub:
     # get best lo for a given interaction
     def get_interaction_lo(self, snp1: snp_t, snp2: snp_t) -> epi_hub_lo_t:
         return self.epi_hub.get_interaction_lo(snp1, snp2)
+    
+    #YF
+    # get best type of encoder for a given snp
+    def get_uni_type(self, snp: snp_t) -> snp_hub_typ_t:
+        return self.snp_hub.get_uni_type(snp)
 
     # get r2 for a given interaction from the epi hub
     def get_interaction_res(self, snp1: snp_t, snp2: snp_t) -> epi_hub_res_t:
         return self.epi_hub.get_interaction_res(snp1, snp2)
+    
+    # get r2 for a given snp from snp hub
+    def get_uni_res(self, snp: snp_t) -> snp_hub_res_t:
+        return self.snp_hub.get_uni_res(snp)
 
     # update epistatic hub and snp hub with new interaction and results
     def update_epi_n_snp_hub(self, snp1: snp_t, snp2: snp_t, result: epi_hub_res_t, lo: epi_hub_lo_t) -> None:
@@ -615,10 +681,19 @@ class GenoHub:
         self.snp_hub.update_hub(snp1, result)
         self.snp_hub.update_hub(snp2, result)
         return
+    
+    ##YF update snp hub with best univariate r2 result and corresponding encoder type
+    def update_snp_uni_hub(self, snp:snp_t, result:snp_hub_res_t, type: snp_hub_typ_t) -> None:
+        self.snp_hub.update_hub_uni(snp, result, type)
+        return
 
     # check if interaction is in the epi hub
     def is_interaction_in_hub(self, snp1: snp_t, snp2: snp_t) -> bool:
         return self.epi_hub.is_interaction_in_hub(snp1, snp2)
+    
+    ##YF check if snp has encoder type recorded in the snp hub
+    def is_encoder_in_hub(self, snp:snp_t) -> bool:
+        return self.snp_hub.is_encoder_in_hub(snp)
 
     # get snp position from the snp hub
     def get_snp_pos(self, snp: snp_t) -> snp_hub_pos_t:

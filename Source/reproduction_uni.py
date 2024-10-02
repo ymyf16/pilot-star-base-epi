@@ -29,11 +29,19 @@ prob_t = np.float64
 # snp type
 snp_t = np.str_
 
+##YF
+#snps type
+snps_t = Set
+
 @typechecked
 class Reproduction:
     def __init__(self,
                  epi_cnt_max: np.uint16,
                  epi_cnt_min: np.uint16,
+
+                 uni_cnt_max: np.uint16,
+                 uni_cnt_min: np.uint16,
+
                  mut_prob: prob_t = prob_t(.5),
                  cross_prob: prob_t = prob_t(.5),
                  mut_selector_p: prob_t = prob_t(.5),
@@ -50,6 +58,10 @@ class Reproduction:
         # save all the variables
         self.epi_cnt_max = epi_cnt_max
         self.epi_cnt_min = epi_cnt_min
+
+        self.uni_cnt_max = uni_cnt_max
+        self.uni_cnt_min = uni_cnt_min
+
         self.mut_prob = mut_prob
         self.cross_prob = cross_prob
         self.mut_selector_p = mut_selector_p
@@ -65,7 +77,8 @@ class Reproduction:
 
         return
 
-    def generate_random_pipeline(self, rng: rng_t, interactions: epi_interactions_t, seed: int) -> Pipeline:
+    ##YF
+    def generate_random_pipeline(self, rng: rng_t, snps: snps_t, interactions: epi_interactions_t, seed: int) -> Pipeline:
         # quick checks
         assert len(interactions) > 0
 
@@ -86,7 +99,7 @@ class Reproduction:
                                 GradientBoostingRegressorNode(rng=rng, seed=seed),
                             ])
         # create the pipeline
-        return Pipeline(selector_node=selector_node, root_node=root_node, epi_pairs=interactions, traits=[])
+        return Pipeline(selector_node=selector_node, root_node=root_node, uni_snps=snps, epi_pairs=interactions, traits=[])
 
     def variation_order(self, rng: rng_t, offpring_cnt: pop_size_t) -> Tuple[List[str], pop_size_t]:
         """
