@@ -11,7 +11,7 @@ from typeguard import typechecked
 from typing import List, Tuple, Set
 import numpy.typing as npt
 
-from Source.pipeline_uni import Pipeline
+from pipeline_uni import Pipeline
 from geno_hub import GenoHub
 
 import copy as cp

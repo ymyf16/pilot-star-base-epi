@@ -43,6 +43,16 @@ class Pipeline:
         # update the epi_pairs
         self.epi_pairs = cp.deepcopy(epi_pairs)
         return
+    
+    ##YF
+    def set_uni_snps(self, uni_snps: uni_t) -> None:
+        # check that internal uni_snps is empty
+        assert len(self.uni_snps) == 0
+        # make sure that the uni_snps are not empty
+        assert len(uni_snps) > 0
+        # update 
+        self.uni_snps = cp.deepcopy(uni_snps)
+        return
 
     # set traits
     def set_traits(self, traits: traits_t) -> None:

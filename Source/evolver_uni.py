@@ -12,11 +12,11 @@ from typing import List
 import pandas as pd
 import os
 import ray
-from Source.pipeline_uni import Pipeline
+from pipeline_uni import Pipeline
 # import nsga_toolbox as nsga
 from sklearn.model_selection import train_test_split
 import time
-from Source.geno_hub_uni import GenoHub
+from geno_hub_uni import GenoHub
 from typing import List, Tuple, Dict, Set
 from epi_node import EpiNode
 from epi_node import EpiCartesianNode, EpiXORNode, EpiPAGERNode, EpiRRNode, EpiRDNode, EpiTNode, EpiModNode, EpiDDNode, EpiM78Node, EpiNode
@@ -112,10 +112,8 @@ def ray_eval_pipeline(x_train,
                       pop_id: np.int16) -> Tuple[np.float32, np.uint16, np.int16]:
     # create the pipeline
     steps = []
-    # combine the epi nodes into a sklearn union
-    steps.append(('epi_union', FeatureUnion([(epi_node.name, epi_node) for epi_node in epi_nodes])))
-    # combine the uni nodes into a sklearn union
-    steps.append(('uni_union', FeatureUnion([(uni_node.name, uni_node) for uni_node in uni_nodes])))
+    #YFupdate epi & uni nodes into one sklearn union
+    steps.append(('feature_union', FeatureUnion([(epi_node.name, epi_node) for epi_node in epi_nodes] + [(uni_node.name, uni_node) for uni_node in uni_nodes])))
     # add the selector node
     steps.append(('selector', selector_node))
     # add the root node
@@ -290,6 +288,8 @@ class EA:
         self.population = [] # will hold all the pipelines
         self.repoduction = Reproduction(epi_cnt_max=epi_cnt_max,
                                         epi_cnt_min=epi_cnt_min,
+                                        uni_cnt_max=uni_cnt_max,
+                                        uni_cnt_min=uni_cnt_min,
                                         mut_prob=mut_prob,
                                         cross_prob=cross_prob,
                                         mut_selector_p=mut_selector_p,
@@ -348,6 +348,12 @@ class EA:
         all_x = pd.read_csv(filepath_or_buffer=path, usecols=self.snp_labels)
         all_y = pd.read_csv(filepath_or_buffer=path, usecols=[self.target_label]).values.ravel()
 
+        #YF change all the 1 in all_x to 0.5, all 2 to 1 in all_x - changing the additive encoding from 0,1,2 to 0,0.5,1
+        all_x = all_x.replace(1, 0.5)
+        all_x = all_x.replace(2, 1)
+
+        # checking the encoding
+        print("Genotype data: ", all_x)
         # check if the data was loaded correctly
         all_x, all_y = self.check_dataset(all_x, all_y)
         print('X_data.shape:', all_x.shape)
@@ -436,6 +442,7 @@ class EA:
         """
         # create the initial population
         self.initialize_population()
+        print("Initialized population")
 
         # print out the population for checks
         # self.print_population()
@@ -447,15 +454,17 @@ class EA:
 
             print('Generation:', g)
 
-            self.plot_pareto_front()
+            # self.plot_pareto_front()
 
             # how many extra pipeline offspring do we need to fill up considered solutions
+            print("calculating extra offspring")
             extra_offspring = self.pop_size - len(self.population)
             # get order of mutation/crossover to do with the extra offspring
             var_order, parent_cnt = self.repoduction.variation_order(self.rng, np.uint16(extra_offspring + self.pop_size))
             # get the parent scores by position
             parent_ids = self.parent_selection(np.array([[pipeline.get_trait_r2(), pipeline.get_trait_feature_cnt()] for pipeline in self.population], dtype=np.float32), parent_cnt)
 
+            print("generating offspring")
             # generate offspring
             offspring = self.repoduction.produce_offspring(rng = self.rng,
                                                            hub = self.hubs,
@@ -471,7 +480,10 @@ class EA:
             offspring = self.process_offspring(offspring)
 
             # evaluate the offspring
+            print("evaluating offspring")
             self.evaluation(offspring)
+            print("offspring eval done")
+
 
             # subset the population to only include pipelines with positive r2 scores
             off = []
@@ -494,6 +506,41 @@ class EA:
 
             # make sure we have the correct number of pipelines
             assert len(self.population) == self.pop_size
+        
+    #YFTODO call save_epihub thing 
+    # save the epi_hub and snp_hub to a file
+    def save_hubs(self, epi_file: str, snp_file: str) -> None:
+        # Save epi hub with headers
+        epi_data = []
+        for k, v in self.hubs.epi_hub.hub.items(): #YF2
+            epi_data.append([k[0], k[1], v[0], v[1]])
+
+        # Sort epi_data by the third column (R2)
+        epi_data.sort(key=lambda x: x[2], reverse=True)  # reverse=True for descending order
+
+        # Write epi hub to file
+        with open(epi_file, 'w') as f:
+            # Write the headers for the epi_file
+            f.write("SNP1,SNP2,R2,LO\n")
+            for row in epi_data:
+                f.write(f"{row[0]},{row[1]},{row[2]},{row[3]}\n")
+
+        # Save snp hub with headers
+        snp_data = []
+        for k, v in self.hubs.snp_hub.hub.items(): #YF2
+            snp_data.append([k, v[0], v[1], v[2], v[3], v[4], v[5]])
+
+        # Sort snp_data by the second column (AVG_R2)
+        snp_data.sort(key=lambda x: x[1], reverse=True)  # reverse=True for descending order
+
+        # Write snp hub to file
+        with open(snp_file, 'w') as f:
+            # Write the headers for the snp_file
+            f.write("SNP,AVG_R2,FREQUENCY,BIN_ID,HUB_POSITION,BEST_INDIV_R2,BEST_ENCOD\n")
+            for row in snp_data:
+                f.write(f"{row[0]},{row[1]},{row[2]},{row[3]},{row[4]},{row[5]},{row[5]}\n")
+
+        return
 
     # get list of pipeline scores (r2, complexity) by position
     def get_pipeline_scores(self, pipelines: List[Pipeline]) -> List[Tuple[np.float32, np.int16]]:
@@ -617,6 +664,8 @@ class EA:
             # add to the population
             pop_uni.append(snps)
 
+            print("initial pop generated, now starts eval")
+
 
 
         # make sure we have the correct number of interactions
@@ -624,11 +673,12 @@ class EA:
         assert len(pop_uni) == 2 * self.pop_size #YF? Is this what we want?
 
         # evaluate all unseen interactions
+        print("evaluating initial unseens")
         self.evaluate_unseen_interactions(unseen_interactions)
         self.evaluate_unseen_snps(unseen_snps)
+        print("unseen eval done")
 
-        ##YF? remove bad interactions for each pipeline's set of interactions and snps together 
-        #NOT SURE IF ZIP() IS THE MOST IDEAL WAY
+        ##YF remove bad interactions for each pipeline's set of interactions and snps together 
         for snps, interactions in zip(pop_uni, pop_epi_interactions):
             good_snps = self.remove_bad_snps(snps)
             good_interactions = self.remove_bad_interactions(interactions)
@@ -640,6 +690,7 @@ class EA:
             # create pipeline and add to the population
             self.population.append(self.repoduction.generate_random_pipeline(self.rng, good_snps, good_interactions, int(self.seed)))
 
+        "removed bad things"
 
         # make sure we have the correct number of pipelines
         assert len(self.population) ==  2 * self.pop_size
@@ -657,7 +708,8 @@ class EA:
         self.population = pop
 
         # get scores from the trimmed population
-        positive_scores = self.get_pipeline_scores(self.population)
+        #YF2 change positive_scores to ndarray to match requirement for non_dominated_sorting
+        positive_scores = np.array(self.get_pipeline_scores(self.population))
 
         # make sure that the size of scores matches the population size
         assert len(positive_scores) == len(self.population)
@@ -1006,9 +1058,11 @@ def main():
     # set experiemnt configurations
     ea_config = {'seed': np.uint16(0),
                  'pop_size': np.uint16(100),
-                 'epi_cnt_max': np.uint16(200),
+                 'epi_cnt_max': np.uint16(150),
                  'epi_cnt_min': np.uint16(10),
-                 'cores': 10,
+                 'uni_cnt_max': np.uint16(150),
+                 'uni_cnt_min': np.uint16(10),
+                 'cores': 8,
                  'mut_selector_p': np.float64(1.0),
                  'mut_regressor_p': np.float64(.5),
                  'mut_ran_p':np.float64(.45),
@@ -1024,11 +1078,12 @@ def main():
 
     ea = EA(**ea_config)
     # need to update the path to the data file
-    data_dir = '/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/pruned_ratdata_bmitail_onSNPnum.csv'
+    data_dir = './test_data/BMIwTail_qtl_10.csv'
     # data_dir = '/Users/hernandezj45/Desktop/Repositories/pilot-star-base-epi/18qtl_pruned_BMIres.csv'
     ea.data_loader(data_dir)
-    ea.initialize_hubs(20)
-    ea.evolve(100)
+    ea.initialize_hubs(20) #try with increased numbers
+    ea.evolve(20)
+    ea.save_hubs(epi_file='./epi_file.txt', snp_file='./snp_file.txt')
 
 
     ray.shutdown()

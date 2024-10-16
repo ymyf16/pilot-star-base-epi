@@ -68,6 +68,7 @@ def non_dominated_sorting(obj_scores: npt.NDArray[np.float32], weights: npt.NDAr
     fronts.pop()
 
     fronts = [np.array(front, dtype=np.uint16) for front in fronts]
+
     return fronts, rank
 
 @typechecked # for debugging purposes

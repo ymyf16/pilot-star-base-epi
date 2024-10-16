@@ -11,8 +11,8 @@ from typeguard import typechecked
 from typing import List, Tuple, Set
 import numpy.typing as npt
 
-from Source.pipeline_uni import Pipeline
-from geno_hub import GenoHub
+from pipeline_uni import Pipeline
+from geno_hub_uni import GenoHub
 
 import copy as cp
 
@@ -53,7 +53,10 @@ class Reproduction:
                  smt_in_out_p: prob_t = prob_t(.45),
                  smt_out_out_p: prob_t = prob_t(.45),
                  num_add_interactions: np.uint16 = np.uint16(10),
-                 num_del_interactions: np.uint16 = np.uint16(10)) -> None:
+                 num_del_interactions: np.uint16 = np.uint16(10),
+                 num_add_snps: np.uint16 = np.uint16(10), ##YF
+                 num_del_snps: np.uint16 = np.uint16(10),
+                 ) -> None:
 
         # save all the variables
         self.epi_cnt_max = epi_cnt_max
@@ -74,6 +77,8 @@ class Reproduction:
         self.smt_out_out_p = smt_out_out_p
         self.num_add_interactions = num_add_interactions
         self.num_del_interactions = num_del_interactions
+        self.num_add_snps = num_add_snps
+        self.num_del_snps = num_del_snps
 
         return
 
@@ -171,9 +176,11 @@ class Reproduction:
         for op in order:
             # mutation
             if op == 'm':
+                print("mut mode of offspring chosen")
                 offspring.append(self.mutate(rng, population[parent_ids[p_id]], hub))
                 p_id += 1
             elif op == 'c':
+                print("crossover mode of offspring chosen")
                 off1, off2 = self.crossover(rng, population[parent_ids[p_id]], population[parent_ids[p_id+1]], hub)
                 offspring.append(off1)
                 offspring.append(off2)
@@ -186,7 +193,8 @@ class Reproduction:
 
         # return the offspring
         return offspring
-
+    
+    #YF added corresponding uni features
     # what mutation are we applying to the pipeline
     def mutate(self,
                rng: rng_t,
@@ -195,6 +203,7 @@ class Reproduction:
 
         # clone the pipeline
         offspring = Pipeline(epi_pairs=set(),
+                             uni_snps = set(),  #YF
                             selector_node=parent.get_selector_node(),
                             root_node=parent.get_root_node(),
                             traits=[])
@@ -202,14 +211,24 @@ class Reproduction:
         # get parent epi pairs
         parent_epi_pairs = cp.deepcopy(parent.get_epi_pairs())
 
+        # get parent uni snps
+        parent_uni_snps = cp.deepcopy(parent.get_uni_snps())
+
         # delete interactions
         parent_epi_pairs = self.delete_interactions(rng, parent_epi_pairs, hub)
+
+        # delete uni snps
+        parent_uni_snps = self.delete_uni_snps(rng, parent_uni_snps, hub)
 
         # get new set of interactions
         new_interactions_list = self.add_interactions(rng, hub, parent_epi_pairs)
 
+        # get new set of uni snps
+        new_snps_list = self.add_uni_snps(rng, hub, parent_uni_snps)
+
         # mutate the offspring
         epi_pairs = set()
+        uni_snps = set()
 
         # go through the epi branches and mutate if needed
         for interaction in parent_epi_pairs:
@@ -219,6 +238,7 @@ class Reproduction:
                 if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
                     # smart mutation
                     epi_pairs.add(self.mutate_epi_node_smrt(rng, hub, interaction[0], interaction[1]))
+                    #YF temporary solution: always do random add/dele for uni_snps, so no change in code here
                 else:
                     # random mutation
                     epi_pairs.add(self.mutate_epi_node_rand(rng, hub, interaction[0], interaction[1]))
@@ -227,7 +247,10 @@ class Reproduction:
                 epi_pairs.add(interaction)
 
         # update the epi pairs + new interactions
+        ##YF update uni snps + new/deleted snps
         offspring.set_epi_pairs(epi_pairs.union(new_interactions_list))
+        offspring.set_uni_snps(uni_snps.union(new_snps_list))
+
 
         # mutate the selector node
         if rng.choice([True, False], p=[self.mut_selector_p, 1.0-self.mut_selector_p]):
@@ -281,6 +304,60 @@ class Reproduction:
 
         # return the interactions without the deleted ones
         return interactions.difference(del_interactions)
+    
+    #YF2 changed uni_snps later types
+    def delete_uni_snps(self,
+                        rng: rng_t,
+                        uni_snps: snps_t,
+                        hub: GenoHub) -> snps_t:
+        # quick checks
+        assert len(uni_snps) - self.uni_cnt_min > 0
+
+        num_snps = len(uni_snps)
+        # num_to_keep = self.uni_cnt_min
+        # num_del_range = max(num_snps - num_to_keep, 0)
+
+        # # determine the number of deletions
+        # max_deletions = min(num_del_range, self.num_del_snps)
+        # num_deletions = rng.integers(1, max_deletions + 1)
+
+        # get a number of snps to delete based on self.uni_cnt_min
+        num_del_range = np.uint16(max(len(uni_snps) - self.uni_cnt_min, 0))
+
+        # if nothing to do return snps
+        if num_del_range == 0 or num_snps == 0:
+            print("del_range = 0 or num_snps = 0, skipping deletion")
+            return uni_snps
+        # if range is 1, delete one snp
+        elif num_del_range == 1:
+            num_deletions = 1
+        # if the range is greater than self.num_del_interactions
+        elif num_del_range >= self.num_del_snps:
+            # get a random number between 1 and num_del_range
+            print("num_deletions:", num_deletions, "from current num_snps", num_snps)
+            num_deletions = rng.integers(1, self.num_del_snps)
+        # else pick a number between the range and 1 (range < self.num_del_interactions)
+        else:
+            num_deletions = rng.integers(1, num_del_range)
+
+        # collect all the results
+        r2_results = []
+        for snp in uni_snps:
+            assert hub.get_uni_res(snp) >= 0.0
+            r2_results.append(np.float32(1.0) - hub.get_uni_res(snp))
+
+        # normalize the results with respect to the sum of r2 results
+        r2_results = np.array(r2_results, dtype=np.float32) / np.sum(r2_results, dtype=np.float32)
+
+        # get a set of interactions to delete
+        del_snps = rng.choice(np.array(list(uni_snps)), num_deletions, p=r2_results, replace=False)
+
+        # convert to sets
+        del_snps = set(del_snps)
+
+        # return the interactions without the deleted ones
+        return uni_snps.difference(del_snps)
+    
 
     # return a specific number of interactions to add to the pipeline
     def add_interactions(self,
@@ -347,6 +424,50 @@ class Reproduction:
 
         # return the interactions
         return new_interactions
+    
+    #YF
+    def add_uni_snps(self,
+                    rng: rng_t,
+                    hub: GenoHub,
+                    uni_snps: snps_t) -> snps_t:
+        # quick checks
+        assert len(uni_snps) <= self.uni_cnt_max
+        assert self.uni_cnt_max - len(uni_snps) >= 0
+
+        # get a number of interactions to add based on self.epi_cnt_max
+        num_add_range = np.uint16(max(self.uni_cnt_max - len(uni_snps), 0))
+
+        # if nothing to do return interactions
+        if num_add_range == 0:
+            return uni_snps
+        # if range is 1, add one interaction
+        elif num_add_range == 1:
+            num_additions = 1
+        # if the range is greater than self.num_add_interactions
+        elif num_add_range >= self.num_add_snps:
+            # get a random number between 1 and num_add_interactions
+            num_additions = rng.integers(1, self.num_add_snps)
+        # else pick a number between the range and 1 (range < self.num_add_interactions)
+        else:
+            num_additions = rng.integers(1, num_add_range)
+
+        # collect all new snps
+        new_snps = set()
+        while len(new_snps) < num_additions:
+            # roll to get the snp
+            new_snp_name = None
+
+            # get the snp randomly
+            new_snp_name = hub.get_ran_snp(rng)
+
+            assert new_snp_name != None
+           # make sure the new snps are not already in the snps set
+            if new_snp_name in new_snps:
+                continue
+            else:
+                new_snps.add(new_snp_name)
+        # return the interactions
+        return new_snps
 
     # execute a smart mutation on the epi_node
     def mutate_epi_node_smrt(self,
@@ -415,34 +536,48 @@ class Reproduction:
 
         return new_snp1_name, new_snp2_name
 
+
+    #YF added uni features
     # execute a crossover between two pipelines
     def crossover(self,
                   rng: np.random.Generator,
                   parent1: Pipeline,
                   parent2: Pipeline,
                   hub: GenoHub) -> Tuple[Pipeline, Pipeline]:
-        # get the epi branches from the parents
+        # get the epi and uni branches from the parents
         p1_epi_pairs = list(parent1.get_epi_pairs())
         p2_epi_pairs = list(parent2.get_epi_pairs())
 
+        p1_uni_snps = list(parent1.get_uni_snps())
+        p2_uni_snps = list(parent2.get_uni_snps())
+
         # get smallest half length from both
-        half_len = min(len(p1_epi_pairs), len(p2_epi_pairs)) // 2
+        half_len_epi = min(len(p1_epi_pairs), len(p2_epi_pairs)) // 2
+        half_len_uni = min(len(p1_uni_snps), len(p2_uni_snps)) // 2
 
         # randomly select indecies from both parents epi branches
-        p1_idx = rng.choice(len(p1_epi_pairs), half_len, replace=False)
-        p2_idx = rng.choice(len(p2_epi_pairs), half_len, replace=False)
+        p1_idx_epi = rng.choice(len(p1_epi_pairs), half_len_epi, replace=False)
+        p2_idx_epi = rng.choice(len(p2_epi_pairs), half_len_epi, replace=False)
+
+        p1_idx_uni = rng.choice(len(p1_uni_snps), half_len_uni, replace=False)
+        p2_idx_uni = rng.choice(len(p2_uni_snps), half_len_uni, replace=False)
 
         # swap elements between parents
-        for i1, i2 in zip(p1_idx, p2_idx):
+        for i1, i2 in zip(p1_idx_epi, p2_idx_epi):
             p1_epi_pairs[i1], p2_epi_pairs[i2] = p2_epi_pairs[i2], p1_epi_pairs[i1]
+
+        for i1, i2 in zip(p1_idx_uni, p2_idx_uni):
+            p1_uni_snps[i1], p2_uni_snps[i2] = p2_uni_snps[i2], p1_uni_snps[i1]
 
         # create one offspring per parent
         offspring_1 = Pipeline(epi_pairs=set(p1_epi_pairs),
+                               uni_snps=set(p1_uni_snps),
                                selector_node=parent1.get_selector_node(),
                                root_node=parent1.get_root_node(),
                                traits=[])
 
         offsprint_2 = Pipeline(epi_pairs=set(p2_epi_pairs),
+                               uni_snps=set(p2_uni_snps),
                                selector_node=parent2.get_selector_node(),
                                root_node=parent2.get_root_node(),
                                traits=[])

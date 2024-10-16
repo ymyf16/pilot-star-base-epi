@@ -227,7 +227,7 @@ class GenoHub:
             # check for snp existence
             assert snp in self.hub
             # return data
-            return self.hub[snp][4]
+            return np.float32(self.hub[snp][4])
         
         #YF
         # get snp encoder type
@@ -680,7 +680,46 @@ class GenoHub:
         # update snp hub with new snps and results
         self.snp_hub.update_hub(snp1, result)
         self.snp_hub.update_hub(snp2, result)
+        
         return
+    
+    
+    #YFTODO Add function to save epi_hub, snp_hub results here
+    # save the epi_hub and snp_hub to a file
+    def save_hubs(self, epi_file: str, snp_file: str) -> None:
+        # Save epi hub with headers
+        epi_data = []
+        for k, v in self.epi_hub.hub.items():
+            epi_data.append([k[0], k[1], v[0], v[1]])
+
+        # Sort epi_data by the third column (R2)
+        epi_data.sort(key=lambda x: x[2], reverse=True)  # reverse=True for descending order
+
+        # Write epi hub to file
+        with open(epi_file, 'w') as f:
+            # Write the headers for the epi_file
+            f.write("SNP1,SNP2,R2,LO\n")
+            for row in epi_data:
+                f.write(f"{row[0]},{row[1]},{row[2]},{row[3]}\n")
+
+        # Save snp hub with headers
+        snp_data = []
+        for k, v in self.snp_hub.hub.items():
+            snp_data.append([k, v[0], v[1], v[2], v[3]])
+
+        # Sort snp_data by the second column (AVG_R2)
+        snp_data.sort(key=lambda x: x[1], reverse=True)  # reverse=True for descending order
+
+        # Write snp hub to file
+        with open(snp_file, 'w') as f:
+            # Write the headers for the snp_file
+            f.write("SNP,AVG_R2,FREQUENCY,BIN_ID,HUB_POSITION\n")
+            for row in snp_data:
+                f.write(f"{row[0]},{row[1]},{row[2]},{row[3]},{row[4]}\n")
+
+        return
+    
+
     
     ##YF update snp hub with best univariate r2 result and corresponding encoder type
     def update_snp_uni_hub(self, snp:snp_t, result:snp_hub_res_t, type: snp_hub_typ_t) -> None:
