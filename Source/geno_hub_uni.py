@@ -41,6 +41,9 @@ snp_hub_res_t = np.float32
 # best encoder type (in str)
 snp_hub_typ_t = np.str_
 
+##YFupdate
+snp_hub_idx_t = np.uint16
+
 
 ### Bin Hub Types
 
@@ -85,6 +88,9 @@ class GenoHub:
             ##YF
             res_pos = 4 # position for the best r2 result among all encoder types in hub value list
             typ_pos = 5 # position for the corresponding encoder types in hub value list
+
+            ##YFupdate
+            idx_pos = 6 # position for the corresponding index of the snp position in the bin
             """
 
             self.hub = {} # {snp: [sum(np.float32), cnt(np.uint32), bin_pos()], ...}
@@ -125,8 +131,9 @@ class GenoHub:
                        cnt: snp_hub_cnt_t,
                        bin: snp_hub_bin_t,
                        pos: snp_hub_pos_t,
+                       idx: snp_hub_idx_t,
                        res: snp_hub_res_t = -1, # Initialize best result as -1
-                       typ: snp_hub_typ_t = np.str_('') # Initialize encoder type as empty np string
+                       typ: snp_hub_typ_t = np.str_(''), # Initialize encoder type as empty np string
                        ) -> None: 
             """
             will take in a snp, sum, cnt, bin, and pos and add it to the hub
@@ -138,11 +145,13 @@ class GenoHub:
                 bin (snp_hub_bin_t): bin number of the snp relative to the bin hub
                 pos (snp_hub_pos_t): position of the snp in the csv header
 
+                idx (snp_hub_idx_t): corresponding index of the snp position in the bin             ##YFupdate
                 res (snp_hub_res_t): best r2 result placeholder
-                typ (snp_hub_typ_t): best encoder type placeholder                
+                typ (snp_hub_typ_t): best encoder type placeholder    
+
             """
             # add to hub
-            self.hub[snp] = [sum, cnt, bin, pos, res, typ]
+            self.hub[snp] = [sum, cnt, bin, pos, res, typ, idx]
             return
 
         # get snp sum
@@ -184,6 +193,14 @@ class GenoHub:
             assert snp in self.hub
             # return data
             return snp_hub_pos_t(self.hub[snp][3])
+        
+        
+        ##YFupdate get snp position idx in the bin
+        def get_snp_idx(self, snp: snp_t) -> snp_hub_idx_t:
+            # assert that snp is in hub
+            assert snp in self.hub
+            # return data
+            return snp_hub_idx_t(self.hub[snp][6])
 
         # update snp sum and count. If count is zero, set sum to value and increment count
         def update_hub(self, snp: snp_t, value: np.float32) -> None:
@@ -265,6 +282,7 @@ class GenoHub:
         """
         def __init__(self) -> None:
             self.bins = {} # {chrom: [np.array([pos1, pos2, ...], dtype=bin_hub_arr_t), ...]}
+            self.idxs = {} # {snp('chrom.pos'): idx_in_bin}
             return
 
         # create bins for snps
@@ -304,13 +322,15 @@ class GenoHub:
 
             # collect each snps bin number
             snp_bins = []
+            #YFupdate also collect snps and their corresponding position index in bin 
+            self.idxs = {}
             # go through self.bins and collect all snps, bin_num
             for chrom, bins in self.bins.items():
                 for i in range(len(bins)):
-                    for pos in bins[i]:
+                    for idx_in_bin, pos in enumerate(bins[i]): #YFupdate to prepare the idx in bin ready for snp hub
                         snp = np.str_(f"{chrom}.{pos}")
                         snp_bins.append((snp, i))
-
+                        self.idxs[snp] = idx_in_bin # Record the index of the SNP within its bin
 
             # cast all bins to numpy arrays for efficiency
             for chrom, bins in self.bins.items():
@@ -337,6 +357,7 @@ class GenoHub:
                     sum += len(bin)
 
             return np.uint16(sum)
+        
 
         # get all snps in a given bin with r2 > 0.0                       SNPS              weighted r2 scores > 0
         def get_snps_r2_in_bin(self, snp: snp_t, snp_hub) -> Tuple[npt.NDArray[snp_t], npt.NDArray[np.float32]]:
@@ -366,6 +387,43 @@ class GenoHub:
 
             # get the snps in the bin
             return np.array(snps, dtype=np.str_), np.array(r2, dtype=np.float32) / np.sum(r2, dtype=np.float32)
+        
+        #YFupdate
+        # get all snps in a given bin within wiggle range with r2 > 0.0                                 SNPS         weighted r2 scores > 0
+        def get_snps_r2_in_bin_wiggle(self, snp: snp_t, snp_hub, step: np.uint16) -> Tuple[npt.NDArray[snp_t], npt.NDArray[np.float32]]:
+            # make sure that snp_hub is the correct type
+            assert isinstance(snp_hub, GenoHub.SNP)
+
+            # get chromosome and position from snp
+            chrom, _ = self.snp_chrm_pos(snp)
+            bin = snp_hub.get_snp_bin(snp)
+            idx = snp_hub.get_snp_idx(snp)
+
+            # go thorugh all snps in the bin wiggle range and collect the ones with r2 > 0.0
+            snps = []
+            r2 = []
+
+            # make sure the wiggle range is within the bin
+            lower_bdd = max(idx-step,0)
+            upper_bdd = min(idx+step, len(self.bins[chrom][bin]))
+
+            wiggle_range = self.bins[chrom][bin][lower_bdd:idx] + self.bins[chrom][bin][idx+1:upper_bdd]  
+            wiggle_snps = np.array([f"{chrom}.{pos}" for pos in wiggle_range], dtype=snp_t)
+
+            for snp in wiggle_snps:
+                # make sure this snp is in the hub
+                assert snp in snp_hub.hub
+
+                # check if r2 is greater than 0.0
+                if snp_hub.get_uni_res(snp) > np.float32(0.0):
+                    snps.append(snp)
+                    r2.append(snp_hub.get_uni_res(snp))
+
+            # make sure snps and r2 are the same size
+            assert len(snps) == len(r2)
+
+            # get the snps in the bin
+            return np.array(snps, dtype=np.str_), np.array(r2, dtype=np.float32) / np.sum(r2, dtype=np.float32)
 
         # return a random snp from the same chromosome and bin
         def get_ran_snp_in_bin(self, snp: snp_t, rng: rng_t, snp_hub) -> snp_t:
@@ -383,6 +441,57 @@ class GenoHub:
 
             # return a random snp
             return snp_t(f"{chrom}.{pos}")
+        
+        #YFupdate
+        # return a random snp from the same chromosome and bin within wiggle range
+        def get_ran_snp_in_bin_wiggle(self, snp: snp_t, rng: rng_t, snp_hub, step: np.uint16) -> snp_t:
+            # make sure there is a '.' inside the snp string
+            assert '.' in snp
+            # make sure snp_hub is the correct type
+            assert isinstance(snp_hub, GenoHub.SNP)
+
+            # get chromosome and position from snp
+            chrom, pos = self.snp_chrm_pos(snp)
+            bin = snp_hub.get_snp_bin(snp)
+            idx = snp_hub.get_snp_idx(snp)
+
+            # make sure the wiggle range is within the bin
+            lower_bdd = max(idx-step,0)
+            upper_bdd = min(idx+step, len(self.bins[chrom][bin]))
+
+            wiggle_range = self.bins[chrom][bin][lower_bdd:idx] + self.bins[chrom][bin][idx+1:upper_bdd]  
+
+            # get ran pos from bin
+            new_pos = rng.choice(wiggle_range)
+
+            assert new_pos != pos
+            # return a random snp
+            return snp_t(f"{chrom}.{new_pos}")
+        
+        # return a smart snp from the same chromosome and bin within wiggle range based on r2
+        def get_smrt_snp_in_bin_wiggle(self, snp: snp_t, rng: rng_t, snp_hub, step: np.uint16) -> snp_t:
+            # make sure there is a '.' inside the snp string
+            assert '.' in snp
+            # make sure snp_hub is the correct type
+            assert isinstance(snp_hub, GenoHub.SNP)
+
+            # get chromosome and position from snp
+            chrom, pos = self.snp_chrm_pos(snp)
+            bin = snp_hub.get_snp_bin(snp)
+            idx = snp_hub.get_snp_idx(snp)
+
+            # make sure the wiggle range is within the bin
+            lower_bdd = max(idx-step,0)
+            upper_bdd = min(idx+step, len(self.bins[chrom][bin]))
+
+            wiggle_range = self.bins[chrom][bin][lower_bdd:idx] + self.bins[chrom][bin][idx+1:upper_bdd]  
+
+            # get ran pos from bin
+            new_pos = rng.choice(wiggle_range, )
+
+            assert new_pos != pos
+            # return a random snp
+            return snp_t(f"{chrom}.{new_pos}")
 
         # get all snps in the same chromosome but different bin
         def get_snps_r2_in_chrom(self, snp: snp_t, snp_hub) -> Tuple[npt.NDArray[snp_t], npt.NDArray[np.float32]]:
@@ -641,13 +750,17 @@ class GenoHub:
 
         # snp hub stuff
         self.snp_hub = self.SNP()
+
         # update snp_hub with snp_bin and snp header positions
         for s in snp_bin:
             # find where snp is located in csv header (snps)
             h_pos = snp_hub_pos_t(np.where(snps == s[0])[0][0])
+            ##YFupdate find where snp is in the bin
+            idx = snp_hub_idx_t(self.bin_hub.idxs[s[0]])
             assert s[0] == snps[h_pos]
+            assert s[0] == np.str_
             # add snp to hub with all its data
-            self.snp_hub.add_to_hub(s[0], snp_hub_sum_t(0.0001), snp_hub_cnt_t(0), snp_hub_bin_t(s[1]), h_pos)
+            self.snp_hub.add_to_hub(s[0], snp_hub_sum_t(0.0001), snp_hub_cnt_t(0), snp_hub_bin_t(s[1]), h_pos, idx=idx)
         print('SNP Hub Initialized')
 
         # epi hub stuff
@@ -705,7 +818,7 @@ class GenoHub:
         # Save snp hub with headers
         snp_data = []
         for k, v in self.snp_hub.hub.items():
-            snp_data.append([k, v[0], v[1], v[2], v[3]])
+            snp_data.append([k, v[0], v[1], v[2], v[3], v[4], v[5],v[6]]) #YFupdate
 
         # Sort snp_data by the second column (AVG_R2)
         snp_data.sort(key=lambda x: x[1], reverse=True)  # reverse=True for descending order
@@ -713,9 +826,9 @@ class GenoHub:
         # Write snp hub to file
         with open(snp_file, 'w') as f:
             # Write the headers for the snp_file
-            f.write("SNP,AVG_R2,FREQUENCY,BIN_ID,HUB_POSITION\n")
+            f.write("SNP,AVG_R2,FREQUENCY,BIN_ID,HUB_POSITION,BEST_R2,BEST_ENCOD\n")
             for row in snp_data:
-                f.write(f"{row[0]},{row[1]},{row[2]},{row[3]},{row[4]}\n")
+                f.write(f"{row[0]},{row[1]},{row[2]},{row[3]},{row[4]},{row[5]},{row[6]}\n")
 
         return
     
@@ -765,6 +878,30 @@ class GenoHub:
         # get a random snp based on r2 scores as weights
         return choice
 
+    #YFupdate
+    # get a snp from the same chromosome and bin within the wiggle range with r2 > 0.0 based on r2 weight
+    def get_smt_snp_in_bin_wiggle(self, snp: snp_t, rng: rng_t, step: np.uint16) -> snp_t:
+        # make sure there is a '.' inside the snp string
+        assert '.' in snp
+
+        # get all snps and r2 scores for a given snp within the same chorosome and bin
+        snps, r2 = self.bin_hub.get_snps_r2_in_bin_wiggle(snp, self.snp_hub, step) 
+        assert(len(snps) == len(r2))
+
+        # if no snps were returned, return a random one
+        if len(snps) == 0:
+            return self.get_ran_snp_in_bin_wiggle(snp, rng, step)
+
+        # get a snp based on r2 scores as weights
+        choice = rng.choice(snps, p=r2)
+
+        # make sure that the snp is not the same as the input snp
+        while choice == snp:
+            choice = rng.choice(snps, p=r2)
+
+        # get a random snp based on r2 scores as weights
+        return choice
+
     # get a random snp from the same chromosome and bin
     def get_ran_snp_in_bin(self, snp: snp_t, rng: rng_t) -> snp_t:
         # make sure there is a '.' inside the snp string
@@ -776,6 +913,22 @@ class GenoHub:
         # make sure that the snp is not the same as the input snp
         while choice == snp:
             choice = self.bin_hub.get_ran_snp_in_bin(snp, rng, self.snp_hub)
+
+        # get a random snp based on r2 scores as weights
+        return choice
+    
+    #YFupdate 
+    # get a random snp from the same chromosome and bin within wiggle range
+    def get_ran_snp_in_bin_wiggle(self, snp: snp_t, rng: rng_t, step: np.uint16) -> snp_t:
+        # make sure there is a '.' inside the snp string
+        assert '.' in snp
+
+        # get a random snp based
+        choice = self.bin_hub.get_ran_snp_in_bin_wiggle(snp, rng, self.snp_hub, step)
+
+        # make sure that the snp is not the same as the input snp
+        while choice == snp:
+            choice = self.bin_hub.get_ran_snp_in_bin_wiggle(snp, rng, self.snp_hub, step)
 
         # get a random snp based on r2 scores as weights
         return choice
@@ -860,3 +1013,4 @@ class GenoHub:
     def get_smt_snp(self, rng:rng_t):
         # call snp hub for a random snp based on r2 weight
         return self.snp_hub.get_snp_r2_weighted(rng)
+    

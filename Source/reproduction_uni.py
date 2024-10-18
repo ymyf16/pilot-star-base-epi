@@ -36,27 +36,31 @@ snps_t = Set
 @typechecked
 class Reproduction:
     def __init__(self,
-                 epi_cnt_max: np.uint16,
-                 epi_cnt_min: np.uint16,
+                epi_cnt_max: np.uint16,
+                epi_cnt_min: np.uint16,
 
-                 uni_cnt_max: np.uint16,
-                 uni_cnt_min: np.uint16,
+                uni_cnt_max: np.uint16,
+                uni_cnt_min: np.uint16,
 
-                 mut_prob: prob_t = prob_t(.5),
-                 cross_prob: prob_t = prob_t(.5),
-                 mut_selector_p: prob_t = prob_t(.5),
-                 mut_regressor_p: prob_t = prob_t(.5),
-                 mut_ran_p: prob_t = prob_t(.45),
-                 mut_non_p: prob_t = prob_t(.1),
-                 mut_smt_p: prob_t = prob_t(.45),
-                 smt_in_in_p: prob_t = prob_t(.1),
-                 smt_in_out_p: prob_t = prob_t(.45),
-                 smt_out_out_p: prob_t = prob_t(.45),
-                 num_add_interactions: np.uint16 = np.uint16(10),
-                 num_del_interactions: np.uint16 = np.uint16(10),
-                 num_add_snps: np.uint16 = np.uint16(10), ##YF
-                 num_del_snps: np.uint16 = np.uint16(10),
-                 ) -> None:
+                mut_prob: prob_t = prob_t(.5),
+                cross_prob: prob_t = prob_t(.5),
+                mut_selector_p: prob_t = prob_t(.5),
+                mut_regressor_p: prob_t = prob_t(.5),
+                mut_ran_p: prob_t = prob_t(.45),
+                mut_non_p: prob_t = prob_t(.1),
+                mut_smt_p: prob_t = prob_t(.45),
+                smt_in_in_p: prob_t = prob_t(.1),
+                smt_in_out_p: prob_t = prob_t(.45),
+                smt_out_out_p: prob_t = prob_t(.45),
+                replace_mut_p: prob_t = prob_t(.45),
+                wiggle_mut_p: prob_t = prob_t(.45), #YFupdate
+                wiggle_rand_p: prob_t= prob_t(.5),
+                wiggle_smrt_p: prob_t= prob_t(.5),
+                step: np.uint16 = np.uint16(5),
+                num_add_interactions: np.uint16 = np.uint16(10),
+                num_del_interactions: np.uint16 = np.uint16(10),
+                num_add_snps: np.uint16 = np.uint16(10), ##YF
+                num_del_snps: np.uint16 = np.uint16(10)) -> None:
 
         # save all the variables
         self.epi_cnt_max = epi_cnt_max
@@ -75,6 +79,11 @@ class Reproduction:
         self.smt_in_in_p = smt_in_in_p
         self.smt_in_out_p = smt_in_out_p
         self.smt_out_out_p = smt_out_out_p
+        self.replace_mut_p = replace_mut_p
+        self.wiggle_mut_p = wiggle_mut_p
+        self.wiggle_rand_p = wiggle_rand_p
+        self.wiggle_smrt_p = wiggle_smrt_p
+        self.step = step
         self.num_add_interactions = num_add_interactions
         self.num_del_interactions = num_del_interactions
         self.num_add_snps = num_add_snps
@@ -226,25 +235,51 @@ class Reproduction:
         # get new set of uni snps
         new_snps_list = self.add_uni_snps(rng, hub, parent_uni_snps)
 
+        # get the customized step for possible wiggle mut
+        step = self.step
+
         # mutate the offspring
         epi_pairs = set()
         uni_snps = set()
 
-        # go through the epi branches and mutate if needed
-        for interaction in parent_epi_pairs:
+        #YFupdate implement mutation to uni snps
+        # go through the epi  and uni branches and mutate if needed
+        for interaction, uni_snp in zip(parent_epi_pairs,parent_uni_snps):
             # coin flip to determine if we mutate
             if rng.choice([True, False], p=[self.mut_non_p, 1.0-self.mut_non_p]):
                 # coin flip to determine the type of mutation
                 if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
                     # smart mutation
                     epi_pairs.add(self.mutate_epi_node_smrt(rng, hub, interaction[0], interaction[1]))
-                    #YF temporary solution: always do random add/dele for uni_snps, so no change in code here
+                    
                 else:
                     # random mutation
-                    epi_pairs.add(self.mutate_epi_node_rand(rng, hub, interaction[0], interaction[1]))
+                    epi_pairs.add(self.mutate_epi_node_rand(rng, hub, interaction[0], interaction[1])) 
+
+                # separate coin flip process for uni node to determine whether to replace/wiggle mut
+                if rng.choice([True, False], p=[self.replace_mut_p / (self.replace_mut_p + self.wiggle_mut_p), self.wiggle_mut_p / (self.replace_mut_p + self.wiggle_mut_p)]):
+                    # replace mut
+                    if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
+                        # smart mutation
+                        uni_snps.add(self.mutate_uni_node_smrt(rng, hub, uni_snp)) 
+                    else:
+                        # random mutation
+                        uni_snps.add(self.mutate_uni_node_rand(rng, hub, uni_snp)) 
+                else:
+                    # wiggle mut
+                    # flip coins for smart or random wiggle mut
+                    if rng.choice([True, False], p=[self.wiggle_smrt_p / (self.wiggle_smrt_p + self.wiggle_rand_p), self.wiggle_rand_p / (self.wiggle_smrt_p + self.wiggle_rand11_p)]):
+                        # smart nearby snp based on R2
+                        uni_snps.add(self.mutate_uni_node_wiggle_smrt(rng,hub,uni_snp,step))
+                    else:
+                        # random nearby snp
+                        uni_snps.add(self.mutate_uni_node_wiggle_rand(rng,hub,uni_snp,step))
+
             else:
                 # no mutation
                 epi_pairs.add(interaction)
+                uni_snps.add(uni_snp)
+
 
         # update the epi pairs + new interactions
         ##YF update uni snps + new/deleted snps
@@ -444,7 +479,7 @@ class Reproduction:
         elif num_add_range == 1:
             num_additions = 1
         # if the range is greater than self.num_add_interactions
-        elif num_add_range >= self.num_add_snps:
+        elif num_add_range >= self.num_add_snps: #YFupdate
             # get a random number between 1 and num_add_interactions
             num_additions = rng.integers(1, self.num_add_snps)
         # else pick a number between the range and 1 (range < self.num_add_interactions)
@@ -458,6 +493,7 @@ class Reproduction:
             new_snp_name = None
 
             # get the snp randomly
+            
             new_snp_name = hub.get_ran_snp(rng)
 
             assert new_snp_name != None
@@ -491,7 +527,8 @@ class Reproduction:
         if new_snp1_name > new_snp2_name:
             return new_snp2_name, new_snp1_name
         return new_snp1_name, new_snp2_name
-
+        
+        
     def get_smrt_snp(self, rng: rng_t, snp_name: snp_t, hub: GenoHub) -> snp_t:
         # randomly select one of the mutations to perform
         mut_fun = rng.choice([0,1,2], p=[self.smt_in_in_p, self.smt_in_out_p, self.smt_out_out_p])
@@ -535,6 +572,76 @@ class Reproduction:
             return new_snp2_name, new_snp1_name
 
         return new_snp1_name, new_snp2_name
+    
+    #YFupdate smrt, rand replace and wiggle mutations for uni snp
+    def mutate_uni_node_smrt(self, 
+                             rng: rng_t,
+                             hub: GenoHub,
+                             snp_name: snp_t) -> snp_t:
+        # will hold new snp
+        new_snp_name = None
+
+        # randomly select one of the smrt mutations
+        new_snp_name = self.get_smrt_snp(rng, snp_name, hub)
+
+        # make sure the new snps are set
+        assert new_snp_name != None
+        return new_snp_name
+    
+    def mutate_uni_node_rand(self,
+                             rng: rng_t,
+                             hub: GenoHub) -> snp_t:
+        # will hold new snp
+        new_snp_name = None
+
+        # randomly select SNP
+        new_snp_name = hub.get_ran_snp(rng)
+
+        # make sure the new snps are set
+        assert new_snp_name != None
+        return new_snp_name
+    
+    def mutate_uni_node_wiggle_rand(self,
+                               rng: rng_t, 
+                               hub: GenoHub, 
+                               uni_snp: snp_t, 
+                               step: np.uint16) -> snp_t:
+        # quick check
+        assert step >= 0
+        
+        # will hold new snp
+        new_snp_name = None
+
+        # randomly select snp within wiggle range from current snp
+        new_snp_name = hub.get_ran_snp_in_bin_wiggle(uni_snp,rng,step)
+
+
+        # make sure the new snps are set and are in the same chromosome and bin
+        assert new_snp_name != None
+        assert new_snp_name != uni_snp
+        return new_snp_name
+    
+    def mutate_uni_node_wiggle_smrt(self,
+                               rng: rng_t, 
+                               hub: GenoHub, 
+                               uni_snp: snp_t, 
+                               step: np.uint16) -> snp_t:
+        # quick check
+        assert step >= 0
+
+        # will hold new snp
+        new_snp_name = None
+
+        # smartly select snp based on R2 as probability within wiggle range from current snp
+        new_snp_name = hub.get_smt_snp_in_bin_wiggle(uni_snp,rng,step)
+
+         # make sure the new snps are set and are in the same chromosome and bin
+        assert new_snp_name != None
+        assert new_snp_name != uni_snp
+        return new_snp_name
+
+
+
 
 
     #YF added uni features
