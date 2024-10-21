@@ -748,6 +748,10 @@ class GenoHub:
         snp_bin = self.bin_hub.generate_bins(snps, bin_size)
         print('Bin Hub Initialized')
 
+        ##YFupdate calculate the total number of possible combo 
+        chrom_size = len(self.bin_hub.bins.keys())
+        self.total_combo = np.uint32(chrom_size) * np.uint32(bin_size) #uint32 instead of uint16 to prevent overflow 
+
         # snp hub stuff
         self.snp_hub = self.SNP()
 
@@ -797,7 +801,7 @@ class GenoHub:
         return
     
     
-    #YFTODO Add function to save epi_hub, snp_hub results here
+    #YFupdate from Attri function to save epi_hub, snp_hub results here
     # save the epi_hub and snp_hub to a file
     def save_hubs(self, epi_file: str, snp_file: str) -> None:
         # Save epi hub with headers

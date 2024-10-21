@@ -8,6 +8,7 @@ from typeguard import typechecked
 import numpy.typing as npt
 from typing_extensions import Self
 import copy as cp
+from geno_hub_uni import GenoHub ##YFupdate
 
 # numpy random number generator type
 gen_rng_t = np.random.Generator
@@ -23,7 +24,8 @@ class Pipeline:
                  uni_snps: uni_t, #YF added univariate part
                  selector_node: ScikitNode,
                  root_node: ScikitNode,
-                 traits: traits_t) -> None:
+                 traits: traits_t,
+                 hub: GenoHub) -> None:
 
         ##YF
         # need to make a deep copy to keep independent
@@ -32,6 +34,11 @@ class Pipeline:
         self.traits = cp.deepcopy(traits) # will contain the r2 (traits[0]) and feature_cnt (traits[1])
         self.selector_node = cp.deepcopy(selector_node) # will contain the selector node
         self.root_node = cp.deepcopy(root_node) # will contain the regressor node
+
+        ##YFupdate trying to implement the diversity stat
+        self.uniq_chrombins = set()
+        self.hub = hub
+
 
     # method to set the epi_pairs
     def set_epi_pairs(self, epi_pairs: epi_pairs_t) -> None:
@@ -73,6 +80,7 @@ class Pipeline:
         assert len(self.traits) == 2
         return self.traits[1]
 
+
     def get_traits(self) -> traits_t:
         return self.traits
 
@@ -98,6 +106,50 @@ class Pipeline:
     # method to get the root node
     def get_root_node(self):
         return self.root_node
+    
+    ##YFupdate 
+    # method to get the number of unique bins in the current pipelin
+    def get_uniq_chrom_bins(self) -> Set:
+        if len(self.uniq_chrombins) == 0: #YFupdate? not sure if this is the most efficient way to go
+            self.calc_uniq_chrom_bins(self.hub)
+            return self.uniq_chrombins
+        else:
+            return self.uniq_chrombins
+    
+    def calc_uniq_chrom_bins(self) -> None:
+        # collect unique SNPs from uni_snps and epi_pairs
+        uniq_snps = set()
+        uniq_snps.update(self.uni_snps)
+        for snp_tuple in self.epi_pairs:
+            uniq_snps.add(snp_tuple[0])
+            uniq_snps.add(snp_tuple[1])
+        # get chrom.bin info from SNPs
+        assert len(uniq_snps) > 0
+        for snp in uniq_snps:
+            assert snp in self.hub
+            # get chrom and bin number
+            chrom, _ = self.hub.bin_hub.snp_chrm_pos(snp)
+            bin = self.hub.snp_hub.get_snp_bin(snp)
+            # create tuple to store
+            self.uniq_chrombins.add((chrom,bin))
+        assert len(self.uniq_chrombins) > 0
+        print("unique bins of current pipeline calculated")
+        return
+
+    ##YFupdate
+    def get_diversity(self) -> np.float32:
+        total_combo = self.hub.total_combo
+        pipeline_combo = len(self.uniq_chrombins)
+        return np.float32(pipeline_combo/total_combo)
+
+
+
+
+
+            
+
+
+
 
     ##YF print the pipeline
     def print_pipeline(self) -> None:
@@ -114,6 +166,8 @@ class Pipeline:
         print(self.selector_node.selector)
         print("Root Node:")
         print(self.root_node.regressor)
+        print("Unique chrom,bin in pipeline:")
+        print(len(self.uniq_bins))
         return
 
     def mutate_selector_node(self, rng: gen_rng_t) -> None:

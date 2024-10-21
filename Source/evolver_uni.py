@@ -550,6 +550,16 @@ class EA:
         Need to multiply the feature count by -1 to ensure that we are minimizing the feature count.
         """
         return [(pipeline.get_trait_r2(), np.int16(pipeline.get_trait_feature_cnt())) for pipeline in pipelines]
+    
+    #YFupdate 
+    # for possible 3D pareto front, get list of pipeline scores (r2, complexity, diversity) by position
+    def get_pipeline_scores_withdiv(self, pipelines: List[Pipeline]) -> List[Tuple[np.float32, np.int16, np.float32]]:
+        """
+        Function to get the pipeline scores (r2, complexit, diversity) by position.
+
+        Need to multiply the feature count by -1 to ensure that we are minimizing the feature count.
+        """
+        return [(pipeline.get_trait_r2(), np.int16(pipeline.get_trait_feature_cnt())) for pipeline in pipelines]
 
     # survival selection
     def survival_selection(self,
@@ -708,7 +718,7 @@ class EA:
         self.population = pop
 
         # get scores from the trimmed population
-        #YF2 change positive_scores to ndarray to match requirement for non_dominated_sorting
+        #YFupdate change positive_scores to ndarray to match requirement for non_dominated_sorting
         positive_scores = np.array(self.get_pipeline_scores(self.population))
 
         # make sure that the size of scores matches the population size

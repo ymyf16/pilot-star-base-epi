@@ -112,6 +112,7 @@ class Reproduction:
                                 SVRNode(rng=rng, seed=seed),
                                 GradientBoostingRegressorNode(rng=rng, seed=seed),
                             ])
+    
         # create the pipeline
         return Pipeline(selector_node=selector_node, root_node=root_node, uni_snps=snps, epi_pairs=interactions, traits=[])
 
