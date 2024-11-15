@@ -43,8 +43,8 @@ if __name__ == "__main__":
     # Match arguments from SLURM job
     parser.add_argument('--seed', type=int, required=True, help="Random seed")
     parser.add_argument('--pop_size', type=int, default=100, help="Population size")
-    parser.add_argument('--epi_cnt_max', type=int, default=200, help="Max episode count")
-    parser.add_argument('--epi_cnt_min', type=int, default=10, help="Min episode count")
+    parser.add_argument('--epi_cnt_max', type=int, default=0, help="Max episode count")
+    parser.add_argument('--epi_cnt_min', type=int, default=0, help="Min episode count")
     parser.add_argument('--uni_cnt_max', type=int, default=200, help="Max uni episode count")
     parser.add_argument('--uni_cnt_min', type=int, default=10, help="Min uni episode count")
     parser.add_argument('--cores', type=int, default=10, help="Number of cores")

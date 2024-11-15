@@ -16,7 +16,7 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate starbasehpc
 
 # Define the output directory
-DATA_DIR=/common/moorej3lab/StarBase/yufei_uni/data/BMIwTail_qtl_10.csv
+DATA_DIR=/common/moorej3lab/StarBase/yufei_uni/pilot-star-base-epi/data/BMIwTail_qtl_10.csv
 RESULTS_DIR=/common/moorej3lab/StarBase/results/Uni/uni_config1/
 
 mkdir -p ${RESULTS_DIR}
