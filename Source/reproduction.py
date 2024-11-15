@@ -192,17 +192,60 @@ class Reproduction:
         # delete interactions
         parent_epi_pairs = self.delete_interactions(rng, parent_epi_pairs, hub)
 
+<<<<<<< Updated upstream
         # get new set of interactions
         new_interactions_list = self.add_interactions(rng, hub, parent_epi_pairs)
+=======
+        # delete interactions if we have more than the minimum
+        # possible to have less than the minimum given epistasis is noisy
+
+        #YFnew: modified delete_interactions and delete_uni_snps to be random/smart deletion based on mut_ran_p, mut_smt_p
+        if len(parent_epi_pairs) > self.epi_cnt_min:
+            parent_epi_pairs = self.delete_interactions(rng, parent_epi_pairs, hub)
+
+        if len(parent_uni_snps) > self.uni_cnt_min:
+            # delete uni snps
+            parent_uni_snps = self.delete_uni_snps(rng, parent_uni_snps, hub)
+
+        # get new set of interactions if we have less than the maximum
+        if len(parent_epi_pairs) < self.epi_cnt_max:
+            new_interactions_list = self.add_interactions(rng, hub, parent_epi_pairs)
+
+        if len(parent_uni_snps) < self.uni_cnt_max:
+            # get new set of uni snps
+            new_snps_list = self.add_uni_snps(rng, hub, parent_uni_snps)
+>>>>>>> Stashed changes
 
         # mutate the offspring
         epi_pairs = set()
 
+<<<<<<< Updated upstream
         # go through the epi branches and mutate if needed
         for interaction in parent_epi_pairs:
             # coin flip to determine if we mutate
             if rng.choice([True, False], p=[self.mut_non_p, 1.0-self.mut_non_p]):
                 # coin flip to determine the type of mutation
+=======
+        # get the customized step for possible wiggle mut
+        step = self.step
+
+        # go through the epi branches and mutate them + #YF
+        for interaction, uni_snp in zip(parent_epi_pairs,parent_uni_snps):
+            # coin flip to determine the type of mutation
+            if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
+                # smart mutation
+                epi_pairs.add(self.mutate_epi_node_smrt(rng, hub, interaction[0], interaction[1]))
+            else:
+                # random mutation
+                epi_pairs.add(self.mutate_epi_node_rand(rng, hub, interaction[0], interaction[1]))
+
+            # separate coin flip process for uni node to determine whether to replace/wiggle mut
+            # todo: update with only wiggle/random mutations to univariate snps
+            # jgh: we don't need this if statement, we are only doing wiggle mutations (smart and dumb) or random mutations
+            #YF?: not sure if the stochastic one needs to keep the smart mutation as well, but just keep it for now
+            if rng.choice([True, False], p=[self.replace_mut_p / (self.replace_mut_p + self.wiggle_mut_p), self.wiggle_mut_p / (self.replace_mut_p + self.wiggle_mut_p)]):
+                # replace mut
+>>>>>>> Stashed changes
                 if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
                     # smart mutation
                     epi_pairs.add(self.mutate_epi_node_smrt(rng, hub, interaction[0], interaction[1]))
@@ -251,17 +294,25 @@ class Reproduction:
         else:
             num_deletions = rng.integers(1, num_del_range)
 
-        # collect all the interactions results
-        r2_results = []
-        for interaction in interactions:
-            assert hub.get_interaction_res(snp1=interaction[0], snp2=interaction[1]) >= 0.0
-            r2_results.append(np.float32(1.0) - hub.get_interaction_res(snp1=interaction[0], snp2=interaction[1]))
+        
+        # coin flip to determine deletion type
+        if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
+            # smart deletion based on r2
+            # collect all the interactions results
+            r2_results = []
+            for interaction in interactions:
+                assert hub.get_interaction_res(snp1=interaction[0], snp2=interaction[1]) >= 0.0
+                r2_results.append(np.float32(1.0) - hub.get_interaction_res(snp1=interaction[0], snp2=interaction[1]))
 
-        # normalize the results with respect to the sum of r2 results
-        r2_results = np.array(r2_results, dtype=np.float32) / np.sum(r2_results, dtype=np.float32)
+            # normalize the results with respect to the sum of r2 results
+            r2_results = np.array(r2_results, dtype=np.float32) / np.sum(r2_results, dtype=np.float32)
 
-        # get a set of interactions to delete
-        del_interactions = rng.choice(list(interactions), num_deletions, p=r2_results, replace=False)
+            # get a set of interactions to delete
+            del_interactions = rng.choice(list(interactions), num_deletions, p=r2_results, replace=False)
+        
+        else:
+            # random deletion
+            del_interactions = rng.choice(list(interactions), num_deletions, replace=False)
 
         # convert to sets
         del_interactions = set([tuple(x) for x in del_interactions])
@@ -269,6 +320,70 @@ class Reproduction:
         # return the interactions without the deleted ones
         return interactions.difference(del_interactions)
 
+<<<<<<< Updated upstream
+=======
+    #YF changed uni_snps later types
+    # todo: need to add a function similar to this but delete a random set of snps (not based on r2)
+    #done! jgh: could you please add this function, where a mut_ran_p, mut_smt_p determine the probability of random or smart deletion
+    def delete_uni_snps(self,
+                        rng: rng_t,
+                        uni_snps: snps_t,
+                        hub: GenoHub) -> snps_t:
+        # quick checks
+        assert len(uni_snps) - self.uni_cnt_min > 0
+
+        num_snps = len(uni_snps)
+        # num_to_keep = self.uni_cnt_min
+        # num_del_range = max(num_snps - num_to_keep, 0)
+
+        # # determine the number of deletions
+        # max_deletions = min(num_del_range, self.num_del_snps)
+        # num_deletions = rng.integers(1, max_deletions + 1)
+
+        # get a number of snps to delete based on self.uni_cnt_min
+        num_del_range = np.uint16(max(len(uni_snps) - self.uni_cnt_min, 0))
+
+        # if nothing to do return snps
+        if num_del_range == 0 or num_snps == 0:
+            print("del_range = 0 or num_snps = 0, skipping deletion")
+            return uni_snps
+        # if range is 1, delete one snp
+        elif num_del_range == 1:
+            num_deletions = 1
+        # if the range is greater than self.num_del_interactions
+        elif num_del_range >= self.num_del_snps:
+            # get a random number between 1 and num_del_range
+            print("num_deletions:", num_deletions, "from current num_snps", num_snps)
+            num_deletions = rng.integers(1, self.num_del_snps)
+        # else pick a number between the range and 1 (range < self.num_del_interactions)
+        else:
+            num_deletions = rng.integers(1, num_del_range)
+            
+        # coin flip to determine deletion types
+        if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
+           # smart deletion based on r2
+            # collect all the results
+            r2_results = []
+            for snp in uni_snps:
+                assert hub.get_uni_res(snp) >= 0.0
+                r2_results.append(np.float32(1.0) - hub.get_uni_res(snp))
+
+            # normalize the results with respect to the sum of r2 results
+            r2_results = np.array(r2_results, dtype=np.float32) / np.sum(r2_results, dtype=np.float32)
+
+            # get a set of interactions to delete
+            del_snps = rng.choice(np.array(list(uni_snps)), num_deletions, p=r2_results, replace=False)
+        
+        else:
+            # random deletion
+            del_snps = rng.choice(np.array(list(uni_snps)), num_deletions, replace=False)
+        # convert to sets
+        del_snps = set(del_snps)
+
+        # return the interactions without the deleted ones
+        return uni_snps.difference(del_snps)
+
+>>>>>>> Stashed changes
     # return a specific number of interactions to add to the pipeline
     def add_interactions(self,
                              rng: rng_t,
@@ -335,6 +450,59 @@ class Reproduction:
         # return the interactions
         return new_interactions
 
+<<<<<<< Updated upstream
+=======
+    #YF
+    # todo: need to add a function similar to this but adds a random set of snps (not based on r2)
+    #done! jgh: could you please add this function, where a mut_ran_p, mut_smt_p determine the probability of random or smart addition
+    def add_uni_snps(self,
+                    rng: rng_t,
+                    hub: GenoHub,
+                    uni_snps: snps_t) -> snps_t:
+        # quick checks
+        assert len(uni_snps) <= self.uni_cnt_max
+        assert self.uni_cnt_max - len(uni_snps) >= 0
+
+        # get a number of interactions to add based on self.epi_cnt_max
+        num_add_range = np.uint16(max(self.uni_cnt_max - len(uni_snps), 0))
+
+        # if nothing to do return interactions
+        if num_add_range == 0:
+            return uni_snps
+        # if range is 1, add one interaction
+        elif num_add_range == 1:
+            num_additions = 1
+        # if the range is greater than self.num_add_interactions
+        elif num_add_range >= self.num_add_snps: #YF update
+            # get a random number between 1 and num_add_interactions
+            num_additions = rng.integers(1, self.num_add_snps)
+        # else pick a number between the range and 1 (range < self.num_add_interactions)
+        else:
+            num_additions = rng.integers(1, num_add_range)
+
+        # collect all new snps
+        new_snps = set()
+        while len(new_snps) < num_additions:
+            # roll to get the snp
+            new_snp_name = None
+
+            if rng.choice([True, False], p=[self.mut_smt_p / (self.mut_smt_p + self.mut_ran_p), self.mut_ran_p / (self.mut_smt_p + self.mut_ran_p)]):
+                # get the snp smartly
+                new_snp_name = hub.get_smt_snp(rng)
+            else:
+                # get the snp randomly
+                new_snp_name = hub.get_ran_snp(rng)
+
+            assert new_snp_name != None
+           # make sure the new snps are not already in the snps set
+            if new_snp_name in new_snps:
+                continue
+            else:
+                new_snps.add(new_snp_name)
+        # return the interactions
+        return new_snps
+
+>>>>>>> Stashed changes
     # execute a smart mutation on the epi_node
     def mutate_epi_node_smrt(self,
                              rng: rng_t,

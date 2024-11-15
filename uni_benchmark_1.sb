@@ -1,0 +1,62 @@
+#!/bin/bash
+########## Define Resources Needed with SBATCH Lines ##########
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --array=1-10%10
+#SBATCH --cpus-per-task=10
+#SBATCH -t 2:00:00
+#SBATCH --mem=100GB
+#SBATCH --job-name=sb-1-1
+#SBATCH -p defq,moore
+#SBATCH --exclude=esplhpc-cp040
+###############################################################
+
+# load conda environment
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate starbasehpc
+
+# Define the output directory
+DATA_DIR=/common/moorej3lab/StarBase/yufei_uni/data/BMIwTail_qtl_10.csv
+RESULTS_DIR=/common/moorej3lab/StarBase/results/Uni/uni_config1/
+
+mkdir -p ${RESULTS_DIR}
+
+
+
+# PARAMETERS
+OFFSET=0
+SEED=$((SLURM_ARRAY_TASK_ID + OFFSET))
+POP_SIZE=100
+GENS=500
+EPI_CNT_MAX=500
+EPI_CNT_MIN=50
+CORES=10
+BIN_SIZE=50
+MUT_RAN_P=0.5
+MUT_NON_P=0.0
+MUT_SMT_P=0.5
+SMT_IN_IN_P=0.33
+SMT_IN_OUT_P=0.33
+SMT_OUT_OUT_P=0.33
+NUM_ADD_INTERACTIONS=10
+NUM_DEL_INTERACTIONS=10
+
+# let it rip
+python /common/moorej3lab/StarBase/yufei_uni/pilot-star-base-epi/runner.py \
+--seed ${SEED} \
+--pop_size ${POP_SIZE} \
+--epi_cnt_max ${EPI_CNT_MAX} \
+--epi_cnt_min ${EPI_CNT_MIN} \
+--cores ${CORES} \
+--mut_ran_p ${MUT_RAN_P} \
+--mut_smt_p ${MUT_SMT_P} \
+--mut_non_p ${MUT_NON_P} \
+--smt_in_in_p ${SMT_IN_IN_P} \
+--smt_in_out_p ${SMT_IN_OUT_P} \
+--smt_out_out_p ${SMT_OUT_OUT_P} \
+--num_add_interactions ${NUM_ADD_INTERACTIONS} \
+--num_del_interactions ${NUM_DEL_INTERACTIONS} \
+--data_dir ${DATA_DIR} \
+--save_directory ${RESULTS_REP_DIR} \
+--bin_size ${BIN_SIZE} \
+--gens ${GENS}

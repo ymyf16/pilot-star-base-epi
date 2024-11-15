@@ -8,7 +8,11 @@ from typeguard import typechecked
 import numpy.typing as npt
 from typing_extensions import Self
 import copy as cp
+<<<<<<< Updated upstream:Source/pipeline_uni.py
 from geno_hub_uni import GenoHub ##YFupdate
+=======
+from .geno_hub import GenoHub #YF for diversity calc
+>>>>>>> Stashed changes:Source/pipeline.py
 
 # numpy random number generator type
 gen_rng_t = np.random.Generator

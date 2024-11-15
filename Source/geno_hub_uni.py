@@ -424,6 +424,91 @@ class GenoHub:
 
             # get the snps in the bin
             return np.array(snps, dtype=np.str_), np.array(r2, dtype=np.float32) / np.sum(r2, dtype=np.float32)
+        
+
+        #YFnew
+        # get all snps in a given wiggle range, including neighboring bins with r2 > 0.0        SNPS                 weighted r2 scores > 0
+        def get_snps_r2_wiggle_range(self, snp: snp_t, snp_hub, step: np.uint16) -> Tuple[npt.NDArray[snp_t], npt.NDArray[np.float32]]:
+            # make sure that snp_hub is the correct type
+            assert isinstance(snp_hub, GenoHub.SNP)
+
+            # get chromosome and position from snp
+            chrom, _ = self.snp_chrm_pos(snp)
+            bin = snp_hub.get_snp_bin(snp)
+            idx = snp_hub.get_snp_idx(snp)
+
+            # go thorugh all snps in the bin wiggle range and collect the ones with r2 > 0.0
+            snps = []
+            r2 = []
+
+            #YFnew: 
+            # left wiggle range 
+            if idx-step >= 0 : # leftmost range still in bin
+                in_bin_left_bdd = idx-step
+                wiggle_range_left = self.bins[chrom][bin][in_bin_left_bdd:idx] 
+            else: # need to go to neighboring bins 
+                bin_size = len(self.bins[chrom][bin])
+                max_bin = len(self.bins[chrom])
+                steps_out_left = abs(idx-step)
+                assert steps_out_left > 0
+                out_bin_num_left = int(steps_out_left // bin_size) # the number of bins that will be all counted
+                out_bin_extra_left = int(steps_out_left % bin_size) # the leftover number of snps after the whole bins
+                # make sure the bin range is within chromosome
+                out_bin_left_bdd = max(0, bin - out_bin_num_left)
+                if out_bin_left_bdd == 0: 
+                    out_bin_extra_left = 0 # again avoid overflow from current chromosome
+                wiggle_range_left = [] #todo: double check the list type
+                for i in range(out_bin_num_left+1):
+                    if i == 0: # at the current bin
+                        wiggle_range_left += self.bins[chrom][bin][:idx] 
+                    elif i == out_bin_num_left: # at the last bin that is not fully covered
+                        wiggle_range_left += self.bins[chrom][bin-i-1][out_bin_extra_left:] # take the leftover snps in the last bin not fully covered
+                    else:
+                        wiggle_range_left += self.bins[chrom][bin-i] #take all snps in bins the range covers
+                
+            
+            # right wiggle range 
+            if idx+step <= bin_size : # rightmost range still in bin
+                in_bin_right_bdd = idx+step
+                wiggle_range_right = self.bins[chrom][bin][idx+1: in_bin_right_bdd] # excluding current idx
+            else: # need to go to neighboring bins
+                bin_size = len(self.bins[chrom][bin])
+                steps_out_right = int(step-bin_size+idx) # simplified from step-(bin_size-idx); the steps outside of current bin
+                assert steps_out_right > 0 
+                out_bin_num_right = int(steps_out_right // bin_size) # the number of bins that will be all counted
+                out_bin_extra_right = int(steps_out_right % bin_size) # the leftover number of snps after the whole bins
+                # make sure the bin range is within chromosome
+                out_bin_right_bdd = min(max_bin, bin+out_bin_num_right)
+                if out_bin_right_bdd == max_bin: 
+                    out_bin_extra_right = 0 # again avoid overflow from current chromosome
+                wiggle_range_right = [] 
+                for i in range(out_bin_num_right+1):
+                    if i == 0: # at the current bin
+                        wiggle_range_right += self.bins[chrom][bin][idx+1:] # all snps on the right side of idx in current bin, excluding current idx
+                    elif i == out_bin_num_right: # at the last bin that is not fully covered
+                        wiggle_range_left += self.bins[chrom][bin+i+1][:out_bin_extra_right] # take the leftover snps in the last bin not fully covered
+                    else:
+                        wiggle_range_left += self.bins[chrom][bin+i] #take all snps in bins the range covers
+
+            # combine the wiggle range
+            wiggle_range = wiggle_range_left + wiggle_range_right
+
+            wiggle_snps = np.array([f"{chrom}.{pos}" for pos in wiggle_range], dtype=snp_t)
+
+            for snp in wiggle_snps:
+                # make sure this snp is in the hub
+                assert snp in snp_hub.hub
+
+                # check if r2 is greater than 0.0
+                if snp_hub.get_uni_res(snp) > np.float32(0.0):
+                    snps.append(snp)
+                    r2.append(snp_hub.get_uni_res(snp))
+
+            # make sure snps and r2 are the same size
+            assert len(snps) == len(r2)
+
+            # get the snps in the bin
+            return np.array(snps, dtype=np.str_), np.array(r2, dtype=np.float32) / np.sum(r2, dtype=np.float32)
 
         # return a random snp from the same chromosome and bin
         def get_ran_snp_in_bin(self, snp: snp_t, rng: rng_t, snp_hub) -> snp_t:
@@ -444,6 +529,7 @@ class GenoHub:
         
         #YFupdate
         # return a random snp from the same chromosome and bin within wiggle range
+        #YFnew: while considering neighboring snps
         def get_ran_snp_in_bin_wiggle(self, snp: snp_t, rng: rng_t, snp_hub, step: np.uint16) -> snp_t:
             # make sure there is a '.' inside the snp string
             assert '.' in snp
@@ -451,23 +537,31 @@ class GenoHub:
             assert isinstance(snp_hub, GenoHub.SNP)
 
             # get chromosome and position from snp
-            chrom, pos = self.snp_chrm_pos(snp)
-            bin = snp_hub.get_snp_bin(snp)
-            idx = snp_hub.get_snp_idx(snp)
+            # chrom, pos = self.snp_chrm_pos(snp)
+            # bin = snp_hub.get_snp_bin(snp)
+            # idx = snp_hub.get_snp_idx(snp)
 
-            # make sure the wiggle range is within the bin
-            lower_bdd = max(idx-step,0)
-            upper_bdd = min(idx+step, len(self.bins[chrom][bin]))
+            snps, _ = self.get_snps_r2_wiggle_range(snp, snp_hub, step)
 
+<<<<<<< Updated upstream:Source/geno_hub_uni.py
             wiggle_range = self.bins[chrom][bin][lower_bdd:idx] + self.bins[chrom][bin][idx+1:upper_bdd]  
+=======
+            # get ran new snp from wiggle range
+            new_snp = rng.choice(snps)
+>>>>>>> Stashed changes:Source/geno_hub.py
 
-            # get ran pos from bin
-            new_pos = rng.choice(wiggle_range)
-
-            assert new_pos != pos
+            assert new_snp != snp
+            while new_snp == snp:
+                new_snp = rng.choice(snps)
+       
             # return a random snp
+<<<<<<< Updated upstream:Source/geno_hub_uni.py
             return snp_t(f"{chrom}.{new_pos}")
         
+=======
+            return snp_t(new_snp)
+
+>>>>>>> Stashed changes:Source/geno_hub.py
         # return a smart snp from the same chromosome and bin within wiggle range based on r2
         def get_smrt_snp_in_bin_wiggle(self, snp: snp_t, rng: rng_t, snp_hub, step: np.uint16) -> snp_t:
             # make sure there is a '.' inside the snp string
@@ -480,17 +574,23 @@ class GenoHub:
             bin = snp_hub.get_snp_bin(snp)
             idx = snp_hub.get_snp_idx(snp)
 
-            # make sure the wiggle range is within the bin
-            lower_bdd = max(idx-step,0)
-            upper_bdd = min(idx+step, len(self.bins[chrom][bin]))
+            snps, r2 = self.get_snps_r2_wiggle_range(snp, snp_hub, step)
 
+<<<<<<< Updated upstream:Source/geno_hub_uni.py
             wiggle_range = self.bins[chrom][bin][lower_bdd:idx] + self.bins[chrom][bin][idx+1:upper_bdd]  
 
             # get ran pos from bin
             new_pos = rng.choice(wiggle_range, )
+=======
+            # get pos from bin based on r2
+            new_pos = rng.choice(snps, p=r2)
+>>>>>>> Stashed changes:Source/geno_hub.py
 
             assert new_pos != pos
-            # return a random snp
+            while new_pos == pos:
+                new_pos = rng.choice(snps, p=r2)
+            
+            # return a new snp
             return snp_t(f"{chrom}.{new_pos}")
 
         # get all snps in the same chromosome but different bin
@@ -761,6 +861,10 @@ class GenoHub:
             h_pos = snp_hub_pos_t(np.where(snps == s[0])[0][0])
             ##YFupdate find where snp is in the bin
             idx = snp_hub_idx_t(self.bin_hub.idxs[s[0]])
+<<<<<<< Updated upstream:Source/geno_hub_uni.py
+=======
+            #assert s[0] == np.str_
+>>>>>>> Stashed changes:Source/geno_hub.py
             assert s[0] == snps[h_pos]
             assert s[0] == np.str_
             # add snp to hub with all its data
@@ -923,6 +1027,7 @@ class GenoHub:
     
     #YFupdate 
     # get a random snp from the same chromosome and bin within wiggle range
+    #YFnew: consider neighboring snps within the numerical bin range as well
     def get_ran_snp_in_bin_wiggle(self, snp: snp_t, rng: rng_t, step: np.uint16) -> snp_t:
         # make sure there is a '.' inside the snp string
         assert '.' in snp

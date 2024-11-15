@@ -442,10 +442,14 @@ class EA:
         """
         # create the initial population
         self.initialize_population()
+<<<<<<< Updated upstream:Source/evolver_uni.py
         print("Initialized population")
 
         # print out the population for checks
         # self.print_population()
+=======
+        print("population initialized")
+>>>>>>> Stashed changes:Source/evolver.py
 
         # run the algorithm for the specified number of generations
         for g in range(gens):
@@ -1002,6 +1006,10 @@ class EA:
 
         return parent_ids
 
+<<<<<<< Updated upstream:Source/evolver_uni.py
+=======
+
+>>>>>>> Stashed changes:Source/evolver.py
     # process offspring
     def process_offspring(self, pipelines: List[Pipeline]) -> List[Pipeline]:
 
@@ -1013,10 +1021,16 @@ class EA:
         self.evaluate_unseen_interactions(unseen_interactions)
 
         # remove bad interactions for each pipeline's set of interactions
+<<<<<<< Updated upstream:Source/evolver_uni.py
+=======
+        # todo: need to remove bad univariate snps
+        #done! found that I forgot to call... jgh: could you also incorporate a remove_bad_snps function here?
+>>>>>>> Stashed changes:Source/evolver.py
         updated_pipelines = []
         for pipeline in pipelines:
             good_interactions = self.remove_bad_interactions(pipeline.get_epi_pairs())
-            updated_pipelines.append(Pipeline(good_interactions, pipeline.get_selector_node(), pipeline.get_root_node(), []))
+            good_snps = self.remove_bad_snps(pipeline.get_uni_snps())
+            updated_pipelines.append(Pipeline(good_interactions, good_snps, pipeline.get_selector_node(), pipeline.get_root_node(), []))
 
         return updated_pipelines
 
