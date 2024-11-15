@@ -133,7 +133,7 @@ class GenoHub:
                        pos: snp_hub_pos_t,
                        idx: snp_hub_idx_t,
                        res: snp_hub_res_t = -1, # Initialize best result as -1
-                       typ: snp_hub_typ_t = np.str_(''), # Initialize encoder type as empty np string
+                       typ: snp_hub_typ_t = np.str_('') # Initialize encoder type as empty np string
                        ) -> None: 
             """
             will take in a snp, sum, cnt, bin, and pos and add it to the hub
