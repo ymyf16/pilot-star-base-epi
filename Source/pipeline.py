@@ -8,7 +8,7 @@ from typeguard import typechecked
 import numpy.typing as npt
 from typing_extensions import Self
 import copy as cp
-from geno_hub import GenoHub #YF for diversity calc
+from .geno_hub import GenoHub #YF for diversity calc
 
 # numpy random number generator type
 gen_rng_t = np.random.Generator
