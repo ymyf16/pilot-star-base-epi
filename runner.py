@@ -33,7 +33,7 @@ def main(args):
     ea.data_loader(args.data_dir)
     ea.initialize_hubs(args.bin_size)
     ea.evolve(args.gens)
-    ea.post_analysis()
+    #ea.post_analysis()
 
     ray.shutdown()
 
