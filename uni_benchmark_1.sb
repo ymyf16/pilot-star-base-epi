@@ -1,5 +1,6 @@
 #!/bin/bash
 ########## Define Resources Needed with SBATCH Lines ##########
+#SBATCH --shell=/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --array=1-10%10
@@ -14,11 +15,11 @@
 ###############################################################
 
 # load conda environment
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate starbase-env
+source /home/mengy/anaconda3/etc/profile.d/conda.sh
+conda activate starbase
 
 # Define the output directory
-DATA_DIR=/common/moorej3lab/StarBase/yufei_uni/pilot-star-base-epi/data/BMIwTail_qtl_10.csv
+DATA_DIR=/common/moorej3lab/StarBase/yufei_hpc/pilot-star-base-epi/data/BMIwTail_qtl_10.csv
 RESULTS_DIR=/common/moorej3lab/StarBase/results/Uni/uni_config1/
 
 mkdir -p ${RESULTS_DIR}
@@ -30,8 +31,10 @@ OFFSET=0
 SEED=$((SLURM_ARRAY_TASK_ID + OFFSET))
 POP_SIZE=100
 GENS=100
-EPI_CNT_MAX=500
-EPI_CNT_MIN=50
+UNI_CNT_MAX=200
+UNI_CNT_MIN=50
+EPI_CNT_MAX=0
+EPI_CNT_MIN=0
 CORES=10
 BIN_SIZE=50
 MUT_RAN_P=0.5
