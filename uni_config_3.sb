@@ -17,7 +17,7 @@ conda activate starbase
 
 # Define the output directory
 DATA_DIR=/common/moorej3lab/StarBase/yufei_hpc/pilot-star-base-epi/data/BMIwTail_qtl_10.csv
-RESULTS_REP_DIR=/common/moorej3lab/StarBase/results/Uni/uni_config2/
+RESULTS_REP_DIR=/common/moorej3lab/StarBase/results/Uni/uni_config3/
 mkdir -p ${RESULTS_REP_DIR}
 
 
