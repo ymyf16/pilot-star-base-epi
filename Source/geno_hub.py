@@ -773,7 +773,7 @@ class GenoHub:
             h_pos = snp_hub_pos_t(np.where(snps == s[0])[0][0])
             ##YF find where snp is in the bin
             idx = snp_hub_idx_t(self.bin_hub.idxs[s[0]])
-            assert s[0] == np.str_
+            # assert s[0] == np.str_
             assert s[0] == snps[h_pos]
             # add snp to hub with all its data
             self.snp_hub.add_to_hub(s[0], snp_hub_sum_t(0.0001), snp_hub_cnt_t(0), snp_hub_bin_t(s[1]), h_pos, idx=idx)
